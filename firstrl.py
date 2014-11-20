@@ -8,6 +8,7 @@ MAP_HEIGHT = 45
 ROOM_MAX_SIZE = 10
 ROOM_MIN_SIZE = 6
 MAX_ROOMS = 30
+MAX_ROOM_MONSTERS = 3
 
 LIMIT_FPS = 20  #20 frames-per-second maximum
 
@@ -91,6 +92,35 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].blocked = False
         map[x][y].block_sight = False
 
+def place_objects(room):
+    num_monsters = libtcod.random_get_int(0, 0, MAX_ROOM_MONSTERS)
+
+    for i in range(num_monsters):
+        #choose a spot for the monster
+        x = libtcod.random_get_int(0, room.x1, room.x2)
+        y = libtcod.random_get_int(0, room.y1, room.y2)
+        
+        #Example for how to create a variety of objects:
+#        #chances: 20% monster A, 40% monster B, 10% monster C, 30% monster D:
+#        choice = libtcod.random_get_int(0, 0, 100)
+#        if choice < 20:
+#            #create monster A
+#        elif choice < 20+40:
+#            #create monster B
+#        elif choice < 20+40+10:
+#            #create monster C
+#        else:
+#            #create monster D        
+        
+        if libtcod.random_get_int(0, 0, 100) < 80: #80% chance of an orc
+            #create orc
+            monster = Object(x, y, 'o', libtcod.desaturated_green)
+        else:
+            #create troll
+            monster = Object(x, y, 'T', libtcod.darker_green)
+            
+        objects.append(monster)
+
 def make_map():
     global map
     # fill map with blocked tiles
@@ -118,6 +148,7 @@ def make_map():
             # paint it to the map's tiles
             create_room(new_room)
             (new_x, new_y) = new_room.center()
+            place_objects(new_room) #add some contents to this room
             
             if num_rooms == 0:
                 #start the player in the center of the first room
@@ -138,6 +169,8 @@ def make_map():
             #finally, append the new room to the list
             rooms.append(new_room)
             num_rooms += 1
+    
+
     
 def render_all():
     global fov_map, color_dark_wall, color_light_wall
@@ -212,7 +245,7 @@ con = libtcod.console_new(SCREEN_WIDTH, SCREEN_HEIGHT)
 libtcod.sys_set_fps(LIMIT_FPS)
 
 player = Object(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, '@', libtcod.white)
-npc = Object(SCREEN_WIDTH/2 - 5, SCREEN_HEIGHT/2, '@', libtcod.amber)
+npc = Object(SCREEN_WIDTH/2 - 5, SCREEN_HEIGHT/2, '@', libtcod.amber) #dummy NPC
 objects = [npc, player]
 
 make_map()
