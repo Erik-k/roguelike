@@ -1,5 +1,6 @@
 import libtcodpy as libtcod
 import math
+import textwrap
 #actual size of the window
 SCREEN_WIDTH = 80
 SCREEN_HEIGHT = 52
@@ -10,6 +11,10 @@ MAP_HEIGHT = 45
 BAR_WIDTH = 20
 PANEL_HEIGHT = 7
 PANEL_Y = SCREEN_HEIGHT - PANEL_HEIGHT
+MSG_X = BAR_WIDTH + 2
+MSG_WIDTH = SCREEN_WIDTH - BAR_WIDTH -2
+MSG_HEIGHT = PANEL_HEIGHT -1
+game_msgs = [] #create the list of game message tuples with their colors
 
 ROOM_MAX_SIZE = 10
 ROOM_MIN_SIZE = 6
@@ -115,10 +120,10 @@ class Fighter:
     def attack(self, target):
         damage = self.power - target.fighter.defense
         if damage > 0:
-            print self.owner.name.capitalize() + ' attacks ' + target.name + ' for ' +str(damage)+ ' hit points.'
+            message(self.owner.name.capitalize() + ' attacks ' + target.name + ' for ' +str(damage)+ ' hit points.', libtcod.white)
             target.fighter.take_damage(damage)
         else:
-            print self.owner.name.capitalize() + ' attacks ' + target.name + ' but it has no effect!' 
+            message(self.owner.name.capitalize() + ' attacks ' + target.name + ' but it has no effect!', libtcod.yellow)
 #------------------------------------------------------------- 
 # AI modules and death states
 #------------------------------------------------------------- 
@@ -137,7 +142,7 @@ class BasicMonster:
             
 def player_death(player):
     global game_state
-    print 'Game Over!'
+    message('Game Over!', libtcod.red)
     game_state = 'dead'
     # transform player into a corpse:
     player.char = '%'
@@ -145,7 +150,7 @@ def player_death(player):
     
 def monster_death(monster):
     # transform into a corpse which doesn't block, can't move, and can't be attacked
-    print monster.name.capitalize() + ' dies!'
+    message(monster.name.capitalize() + ' dies!', libtcod.orange)
     monster.char = '%'
     monster.color = libtcod.dark_red
     monster.blocks = False
@@ -290,6 +295,14 @@ def place_objects(room):
             
             objects.append(monster)
 #-------------------------------------------------------------
+def message(new_msg, color=libtcod.white):      
+    new_msg_lines = textwrap.wrap(new_msg, MSG_WIDTH)
+    for line in new_msg_lines:
+        #if the buffer is full, remove the first line to make room for the new one
+        if len(game_msgs) == MSG_HEIGHT:
+            del game_msgs[0]
+        game_msgs.append( (line, color) )
+            
 def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
     #Render a bar. First calculate the width of the bar:
     bar_width = int(float(value) / maximum * total_width)
@@ -343,9 +356,19 @@ def render_all():
     #prepare to render the GUI panel
     libtcod.console_set_default_background(panel, libtcod.black)
     libtcod.console_clear(panel)
+
+    y = 1
+    for (line, color) in game_msgs:
+        libtcod.console_set_default_foreground(panel, color)
+        libtcod.console_print_ex(panel, MSG_X, y, libtcod.BKGND_NONE, libtcod.LEFT, line)
+        y += 1
+        
     #show the player's stats
     render_bar(1, 1, BAR_WIDTH, 'HP', player.fighter.hp, player.fighter.max_hp,
         libtcod.light_red, libtcod.darker_red)
+    #display names of objects under the mouse
+    libtcod.console_set_default_foreground(panel, libtcod.light_gray)
+    libtcod.console_print_ex(panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse())
     #blit the contents of "panel" to the root console
     libtcod.console_blit(panel, 0, 0, SCREEN_WIDTH, PANEL_HEIGHT, 0, 0, PANEL_Y)
     
@@ -371,30 +394,39 @@ def player_move_or_attack(dx, dy):
         player.move(dx, dy)
         fov_recompute = True
 
+def get_names_under_mouse():
+    global mouse
+    
+    #return a string with the names of all objects under the mouse
+    (x, y) = (mouse.cx, mouse.cy)    
+    #create a list with the names of all objects under the mouse AND in FOV 
+    names = [obj.name for obj in objects if obj.x == x and obj.y == y and libtcod.map_is_in_fov(fov_map, obj.x, obj.y)]
+    names = ', '.join(names) #concatenates the names into a big string, separated by a comma
+    return names.capitalize() 
+    
 def handle_keys():
     global fov_recompute
-    #key = libtcod.console_check_for_keypress()  #real-time
-    key = libtcod.console_wait_for_keypress(True)  #turn-based
- 
+    global key
+
     if key.vk == libtcod.KEY_ENTER and key.lalt:
         #Alt+Enter: toggle fullscreen
         libtcod.console_set_fullscreen(not libtcod.console_is_fullscreen())
- 
+
     elif key.vk == libtcod.KEY_ESCAPE:
         return 'exit'  #exit game
- 
+
     #movement keys
     if game_state == 'playing':
-        if libtcod.console_is_key_pressed(libtcod.KEY_UP):
+        if key.vk == libtcod.KEY_UP:
             player_move_or_attack(0, -1)
             
-        elif libtcod.console_is_key_pressed(libtcod.KEY_DOWN):
+        elif key.vk == libtcod.KEY_DOWN:
             player_move_or_attack(0, 1)
              
-        elif libtcod.console_is_key_pressed(libtcod.KEY_LEFT):
+        elif key.vk == libtcod.KEY_LEFT:
             player_move_or_attack(-1, 0)
              
-        elif libtcod.console_is_key_pressed(libtcod.KEY_RIGHT):
+        elif key.vk == libtcod.KEY_RIGHT:
             player_move_or_attack(1, 0)
             
         else:
@@ -427,9 +459,14 @@ for y in range(MAP_HEIGHT):
 
 game_state = 'playing'
 player_action = None
+message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod.', libtcod.red)
+
+mouse = libtcod.Mouse()
+key = libtcod.Key()
 #-------------------------------------------------------------
 # The Main Loop!
 while not libtcod.console_is_window_closed():
+    libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
     render_all()
    
     libtcod.console_flush()
