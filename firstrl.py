@@ -24,6 +24,12 @@ MAX_ROOM_MONSTERS = 3
 MAX_ROOM_ITEMS = 2
 
 HEAL_AMOUNT = 4
+LIGHTNING_RANGE = 5
+LIGHTNING_DAMAGE = 20
+CONFUSE_NUM_TURNS = 10
+CONFUSE_RANGE = 8
+FIREBALL_RADIUS = 3
+FIREBALL_DAMAGE = 12
 
 LIMIT_FPS = 20  #20 frames-per-second maximum
 
@@ -85,10 +91,14 @@ class Object:
         self.move(dx, dy)
         
     def distance_to(self, other):
-        #return the distance to another object
+        #return the distance to another object from this object
         dx = other.x - self.x
         dy = other.y - self.y
         return math.sqrt(dx ** 2 + dy ** 2)        
+        
+    def distance(self, x, y):
+        #returns the distance between an object and a tile
+        return math.sqrt( (x - self.x)**2 + (y - self.y)**2 )
         
     def draw(self):
         # set the color and then draw the object at its position
@@ -137,16 +147,6 @@ class Fighter:
         if self.hp > self.max_hp:
             self.hp = self.max_hp
 
-def cast_heal():
-    # This method becomes the use_function property in the relevant Item object. So when Item.use_function() gets called, it calls
-    # this method, if the item had this passed as the parameter for use_function upon creation.
-    if player.fighter.hp == player.fighter.max_hp:
-        message('You are already at full health.', libtcod.red)
-        return 'cancelled'
-        
-    message('Your wounds start to feel better!', libtcod.light_violet)
-    player.fighter.heal(HEAL_AMOUNT)
-
 class Item:
     def __init__(self, use_function=None):
         self.use_function = use_function
@@ -170,10 +170,116 @@ class Item:
             objects.remove(self.owner)
             message('You picked up a ' + self.owner.name + '!', libtcod.green)
             
+    def drop(self):
+        #add to the map and remove from the player's inventory. Place it at the player's coordinates
+        objects.append(self.owner)
+        inventory.remove(self.owner)
+        self.owner.x = player.x
+        self.owner.y = player.y
+        message('You dropped a ' + self.owner.name + '.', libtcod.yellow)
+            
+def target_tile(max_range=None):
+    #return the position of a tile left-clicked in player's FOV (optionally in a range), or (None,None) if right-clicked.
+    global key, mouse
+    while True:
+        # render the screen, which erases the inventory screen and shows the names of objects under the mouse
+        libtcod.console_flush()
+        libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE, key, mouse)
+        render_all()
+        
+        (x, y) = (mouse.cx, mouse.cy)
+        #accept the target if the player clicked in FOV, and in case a range is specified, if it's in that range
+        if (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map, x, y) and 
+            (max_range is None or player.distance(x, y) <= max_range) ):
+            return (x, y)
+        # Give the player ways to cancel, if they right click or press escape:
+        if mouse.rbutton_pressed or key.vk == libtcod.KEY_ESCAPE:
+            return (None, None) # have to return a tuple with 2 output args
+            
+def target_monster(max_range=None):
+    #returns a clicked monster inside FOV up to a range, or None if right-click to cancel
+    while True:
+        (x, y) = target_tile(max_range)
+        if x is None: #player canceled
+            return None
+            
+        #return the first clicked monster, otherwise continue looping
+        for obj in objects:
+            if obj.x == x and obj.y == y and obj.fighter and obj != player:
+                return obj
+            
+def cast_heal():
+    # This method becomes the use_function property in the relevant Item object. So when Item.use_function() gets called, it calls
+    # this method, if the item had this passed as the parameter for use_function upon creation.
+    if player.fighter.hp == player.fighter.max_hp:
+        message('You are already at full health.', libtcod.red)
+        return 'cancelled'
+        
+    message('Your wounds start to feel better!', libtcod.light_violet)
+    player.fighter.heal(HEAL_AMOUNT)
 
-#------------------------------------------------------------- 
+def cast_lightning():
+    #find the closest enemy inside a max range and damage it
+    monster = closest_monster(LIGHTNING_RANGE)
+    if monster is None:
+        message('No enemy is close enough to strike.', libtcod.azure)
+        return 'cancelled'
+        
+    message('A lightning bolt strikes the ' + monster.name + ' with a loud thunderclap! The damage is '
+        + str(LIGHTNING_DAMAGE) + ' hit points.', libtcod.light_blue)
+    monster.fighter.take_damage(LIGHTNING_DAMAGE)
+
+def closest_monster(max_range):
+    closest_enemy = None
+    closest_dist = max_range + 1
+    
+    for object in objects:
+        if object.fighter and not object == player and libtcod.map_is_in_fov(fov_map, object.x, object.y):
+            dist = player.distance_to(object)
+            if dist < closest_dist:
+                closest_enemy = object
+                closest_dist = dist
+    return closest_enemy
+
+def cast_confuse():
+    #ask the player for a target to confuse
+    message('Left-click an enemy to confuse it, or right-click to cancel.', libtcod.light_green)
+    monster = target_monster(CONFUSE_RANGE)
+    if monster is None: return 'cancelled'
+    
+    #replace the monster's AI with the confused AI
+    old_ai = monster.ai
+    monster.ai = ConfusedMonster(old_ai)
+    monster.ai.owner = monster #you need to tell the new component who owns it every time you replace a component during runtime
+    message('The ' + monster.name + ' starts to stumble around!', libtcod.light_green)
+    
+def cast_fireball():
+    #ask the player for a target tile at which to throw a fireball:
+    message('Left-click a tile for the fireball or right-click to cancel.', libtcod.light_red)
+    (x, y) = target_tile()
+    if x is None: return 'cancelled'
+    message('The fireball explodes, burning everything within ' + str(FIREBALL_RADIUS) + ' tiles!', libtcod.orange)
+    
+    for obj in objects: 
+        # damage every fighter within range, including the player. To avoid damaging the player, add " and obj != player"
+        if obj.distance(x, y) <= FIREBALL_RADIUS and obj.fighter:
+            message('The ' + obj.name + ' gets burned for ' + str(FIREBALL_DAMAGE) + ' hit points.', libtcod.orange)
+            obj.fighter.take_damage(FIREBALL_DAMAGE)
+
+#============================================================= 
 # AI modules and death states
-#------------------------------------------------------------- 
+#============================================================= 
+
+#for most types of AI that have different states, you can simply have a "state" property in the AI component, 
+#like this: 
+#class MultiStateAI:
+#    def __init__(self):
+#        self.state = 'chasing'
+#    def take_turn(self):
+#        if self.state == 'chasing': ...
+#        elif self.state == 'running away': ...
+# This is preferable to swapping AI components like a state machine which can get overly complicated.
+
 class BasicMonster:
     #AI module for a basic monster
     def take_turn(self):
@@ -186,6 +292,20 @@ class BasicMonster:
             # if close enough, attack!
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
+            
+class ConfusedMonster:
+    #AI for a confused monster. Must take previous AI as argument so it can revert to it after a while
+    def __init__(self, old_ai, num_turns=CONFUSE_NUM_TURNS):
+        self.old_ai = old_ai
+        self.num_turns = num_turns
+
+    def take_turn(self):
+        if self.num_turns > 0:
+            self.owner.move(libtcod.random_get_int(0, -1, 1), libtcod.random_get_int(0, -1, 1))            
+            self.num_turns -= 1
+        else:
+            self.owner.ai = self.old_ai
+            message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)            
             
 def player_death(player):
     global game_state
@@ -347,9 +467,22 @@ def place_objects(room):
         x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
         y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
         if not is_blocked(x, y):
-            #creating a healing potion:
-            item_component = Item(use_function=cast_heal)
-            item = Object(x, y, '!', 'healing potion', libtcod.violet, item=item_component)
+            dice = libtcod.random_get_int(0, 0, 100)
+            if dice < 70:
+                #creating a healing potion:
+                item_component = Item(use_function=cast_heal)
+                item = Object(x, y, '!', 'healing potion', libtcod.violet, item=item_component)
+            elif dice < 70+10: 
+                # chance of lightning scroll
+                item_component = Item(use_function=cast_lightning)
+                item = Object(x, y, '?', 'lightning scroll', libtcod.light_azure, item=item_component)
+            elif dice < 70+10+10:
+                item_component = Item(use_function=cast_fireball)
+                item = Object(x, y, '*', 'fireball scroll', libtcod.orange, item=item_component)
+            else: 
+                item_component = Item(use_function=cast_confuse)
+                item = Object(x, y, '#', 'scroll of confusion', libtcod.light_yellow, item=item_component)
+                
             objects.append(item)
             item.send_to_back() #make items appear below other objects
 #-------------------------------------------------------------
@@ -549,6 +682,12 @@ def handle_keys():
                 chosen_item = inventory_menu('Press the key next to an item to use it, or any other key to cancel.\n')
                 if chosen_item is not None:
                     chosen_item.use()
+                    
+            if key_char == 'd':
+                #show the inventory and drop the selected item
+                chosen_item = inventory_menu('Press the key next to an item to drop it, or any other key to cancel.\n')
+                if chosen_item is not None:
+                    chosen_item.drop()
                     
             return 'didnt_take_turn'
          
