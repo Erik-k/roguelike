@@ -1,6 +1,8 @@
 import libtcodpy as libtcod
 import math
 import textwrap
+import shelve
+
 #actual size of the window
 SCREEN_WIDTH = 80
 SCREEN_HEIGHT = 52
@@ -15,7 +17,6 @@ PANEL_Y = SCREEN_HEIGHT - PANEL_HEIGHT
 MSG_X = BAR_WIDTH + 2
 MSG_WIDTH = SCREEN_WIDTH - BAR_WIDTH -2
 MSG_HEIGHT = PANEL_HEIGHT -1
-game_msgs = [] #create the list of game message tuples with their colors
 
 ROOM_MAX_SIZE = 10
 ROOM_MIN_SIZE = 6
@@ -377,7 +378,10 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].block_sight = False
 
 def make_map():
-    global map
+    global map, objects
+    
+    objects = [player]    
+    
     # fill map with blocked=True or blocked=False tiles
     # By using Python's range function this creates the list of tiles, even though its
     # just two for statements.
@@ -497,8 +501,11 @@ def message(new_msg, color=libtcod.white):
 def menu(header, options, width):
     #header is title at top of window. Options is list of strings. Height is implied by options length
     if len(options) > 26: raise ValueError('Cannot have a menu with more than 26 options.')
+
     #calculate total height for the header after auto-wrap, and then one line per option
     header_height = libtcod.console_get_height_rect(con, 0, 0, width, SCREEN_HEIGHT, header)
+    if header == '':
+        header_height = 0 #otherwise there is a blank line on top of the menu if there's no header
     height = len(options) + header_height
     #create an off-screen console that represents the menu's window
     window = libtcod.console_new(width, height)
@@ -524,6 +531,9 @@ def menu(header, options, width):
     #present the rot console to the player and wait for a key-press
     libtcod.console_flush()
     key = libtcod.console_wait_for_keypress(True)
+    if key.vk == libtcod.KEY_ENTER and key.lalt:
+        #Alt+Enter: toggle fullscreen
+        libtcod.console_set_fullscreen(not libtcod.console_is_fullscreen())
     #convert the ASCII code to an index. If it corresponds to an option, return the index.
     index = key.c - ord('a') # key.c is the ASCII code of the character that was pressed
     if index >= 0 and index < len(options): return index
@@ -610,7 +620,9 @@ def render_all():
     #blit the contents of "panel" to the root console
     libtcod.console_blit(panel, 0, 0, SCREEN_WIDTH, PANEL_HEIGHT, 0, 0, PANEL_Y)
     
-#-------------------------------------------------------------        
+#==============================================================================
+# Keyboard and Mouse management        
+#==============================================================================
 def player_move_or_attack(dx, dy):
     global fov_recompute
     
@@ -695,7 +707,7 @@ def handle_keys():
 # Initialization & Main Loop
 #############################################
  
-libtcod.console_set_custom_font('libtcod-1.5.1/data/fonts/arial10x10.png', libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_TCOD)
+libtcod.console_set_custom_font('libtcod-1.5.1/data/fonts/arial12x12.png', libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_TCOD)
 libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'python/libtcod tutorial', False)
 # off screen console "con"
 con = libtcod.console_new(MAP_WIDTH, MAP_HEIGHT)
@@ -704,53 +716,150 @@ panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
 
 libtcod.sys_set_fps(LIMIT_FPS)
 
-#Creating the object representing the player:
-fighter_component = Fighter(hp=30, defense=2, power=5, death_function=player_death) #creating the fighter aspect of the player
-player = Object(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component)
-objects = [player]
-inventory = []
-
-make_map()
-
-fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
-for y in range(MAP_HEIGHT):
-    for x in range(MAP_WIDTH):
-        libtcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
-
-game_state = 'playing'
-player_action = None
-message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod.', libtcod.red)
-
-mouse = libtcod.Mouse()
-key = libtcod.Key()
-#-------------------------------------------------------------
-# The Main Loop!
-while not libtcod.console_is_window_closed():
-    libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
-    render_all()
-   
-    libtcod.console_flush()
+def new_game():
+    global player, inventory, game_msgs, game_state
     
-    for object in objects:
-        object.clear()
+    #Creating the object representing the player:
+    fighter_component = Fighter(hp=30, defense=2, power=5, death_function=player_death) #creating the fighter aspect of the player
+    player = Object(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component)
 
-    #handle keys and exit game if needed
-    player_action = handle_keys()
-    if player_action == 'exit':
-        break
-    if game_state == 'playing' and player_action != 'didnt_take_turn': #let monsters take their turn
+    #generate map, but at this point its not drawn to the screen    
+    make_map()
+    initialize_fov()
+
+    game_state = 'playing'
+    inventory = []    
+    
+    #create the list of game messages and their colors.
+    game_msgs = []    
+
+    message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod.', libtcod.red)
+
+def initialize_fov():
+    global fov_recompute, fov_map
+    fov_recompute = True
+    
+    #create the FOV map according to the generated map
+    fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
+    for y in range(MAP_HEIGHT):
+        for x in range(MAP_WIDTH):
+            libtcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
+            
+    libtcod.console_clear(con)
+
+def play_game():
+    global key, mouse
+    
+    player_action = None
+    
+    mouse = libtcod.Mouse()
+    key = libtcod.Key()
+    while not libtcod.console_is_window_closed():
+        libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
+        render_all() #render the screen
+       
+        libtcod.console_flush()
+        
+        #erase all objects at their old locations, before they move
         for object in objects:
-            if object.ai:
-                object.ai.take_turn()
+            object.clear()
+    
+        #handle keys and exit game if needed
+        player_action = handle_keys()
+        if player_action == 'exit':
+            save_game()
+            break
+        
+        #let monsters take their turn
+        if game_state == 'playing' and player_action != 'didnt_take_turn': #let monsters take their turn
+            for object in objects:
+                if object.ai:
+                    object.ai.take_turn()
+                    
+def msgbox(text, width=50):
+    menu(text, [], width) #use our menu() function as a sort of "message box"
+
+def main_menu():
+    img = libtcod.image_load('menu_background1.png')
+    
+    while not libtcod.console_is_window_closed():
+        #show the background image at 2x the normal resolution using special font characters to do sub-cell shading:
+        libtcod.image_blit_2x(img, 0, 0, 0)
+        
+        #show the game's title and opening credits
+        libtcod.console_set_default_foreground(0, libtcod.light_yellow)
+        libtcod.console_print_ex(0, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-4, libtcod.BKGND_NONE, libtcod.CENTER, 
+                                 'MARXIST MARTIANS!')
+        libtcod.console_print_ex(0, SCREEN_WIDTH/2, SCREEN_HEIGHT-2, libtcod.BKGND_NONE, libtcod.CENTER, 
+                                 'By K\'NEK-TEK')
+        
+        #show options and wait for the player's choice
+        choice = menu('', ['New Game', 'Continue', 'Quit'], 24)
+        if choice == 0: #new game
+            new_game()
+            play_game()
+        elif choice == 1: #load game
+            try:
+                load_game()
+            except:
+                msgbox('\n No saved game to load.\n', 24)
+                continue
+            play_game()
+        elif choice == 2: #quit
+            break
+
+def save_game():
+    #opens a new empty shelve, possibly overwriting an old one, to write the game data
+    file = shelve.open('savegame', 'n')
+    file['map'] = map
+    file['objects'] = objects
+    file['player_index'] = objects.index(player) 
+    # This stuff with player_index prevents double-referencing the player object. We only save the index of
+    # the player object in the list of the objects, we never save the player object specifically. To restore it in 
+    # load_game(), we take the index and place object[player_index] into the player object.
+    file['inventory'] = inventory
+    file['game_msgs'] = game_msgs
+    file['game_state'] = game_state
+    file.close()
+    
+def load_game():
+    global map, objects, player, inventory, game_msgs, game_state
+    
+    file = shelve.open('savegame', 'r')
+    map = file['map']
+    objects = file['objects']
+    player = objects[file['player_index']] #all we stored previously was the player index. The player itself was stored in objects[].
+    inventory = file['inventory']
+    game_msgs = file['game_msgs']
+    game_state = file['game_state']
+    file.close()
+    
+    # Now that the core variables of the game have been restored, we can initialize the FOV map based on the loaded tiles:
+    initialize_fov()
+    
+    
+
+#==============================================================================
+# Start the game!
+#==============================================================================
+main_menu()
+
                 
                 
 #############################################
 # To Do list:
+# * If game_state == 'dead' upon saving, then give the save file a post-mortem file type.
 # * Break out modules into their own files- objects, graphics, main program loop and globals
-# * Set it outside on Martian soil- red colors, day/night cycle. Enlarge the play area.
+# * Set it outside on Martian soil- red colors, day/night cycle. Enlarge the play area. Buildings should
+#   be placed by the map after terrain is created, as white squares which are free to interrupt the terrain.
+# * Choose a really neat main menu image- something like Gagarin Deep Space.
+# * Implement a help menu that shows available key commands. Display it like the inventory window.
+# * Display a separate game window to practice the difference between consoles and windows.
 # * Scientists, laborers, engineers, with specializations:
 #   Botanist (farmer), Engineer (builder), Laborer (?? operators?). Use the object component method described in 
 #   tutorial 6.
 # * Test out AI by having characters randomly walk from one building to another to simulate
-#   a schedule. Have them say where they are going if the player bumps in to them.
+#   a schedule. Have them say where they are going if the player bumps in to them or clicks on them.
+# * Add a computer, and if the player uses the computer it brings up an interactive command prompt, possibly
+#   in a separate window until they exit it. Make it gameplay relevant.
 #############################################
