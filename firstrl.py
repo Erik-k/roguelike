@@ -23,8 +23,6 @@ CHARACTER_SCREEN_WIDTH = 30
 ROOM_MAX_SIZE = 10
 ROOM_MIN_SIZE = 6
 MAX_ROOMS = 30
-MAX_ROOM_MONSTERS = 3
-MAX_ROOM_ITEMS = 2
 
 # gameplay constants
 HEAL_AMOUNT = 4
@@ -467,10 +465,60 @@ def next_level():
     dungeon_level += 1
     make_map() # a fresh level!
     initialize_fov()
+    
+def random_choice_index(chances):
+    dice = libtcod.random_get_int(0, 1, sum(chances))
 
-#-------------------------------------------------------------    
+    running_sum = 0
+    choice = 0
+    
+    for w in chances:
+        running_sum += w
+        if dice <= running_sum:
+            return choice
+        choice += 1
+
+def random_choice(chances_dict):
+    #choose an option from a dictionary of chances, and return the key
+    chances = chances_dict.values() 
+    strings = chances_dict.keys()
+
+    return strings[random_choice_index(chances)] # returns the key which corresponds to the chosen chance
+
+def from_dungeon_level(table):
+    #returns a value that depends on level. The table must be a list of [value, level] pairs. For example, 
+    # a square progression would be:
+    # [1, 1]
+    # [4, 2]
+    # [9, 3]
+    # which is represented as [[1, 1], [4, 2], [9, 3]]
+    # TODO: Use sorting to enforce the assumption that the table is in ascending order.
+    for (value, level) in reversed(table):
+        if dungeon_level >= level:
+            return value
+    return 0  #default is zero
+
 def place_objects(room):
-    num_monsters = libtcod.random_get_int(0, 0, MAX_ROOM_MONSTERS)
+    # max number of monsters per room:
+    max_monsters = from_dungeon_level( [ [2, 1], [3, 4], [5, 6] ] )
+
+    #chance of each monster
+    monster_chances = {} # so that we can build the dict below
+    monster_chances['orc'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
+    monster_chances['troll'] = from_dungeon_level( [ [15, 3], [30, 5], [60, 7] ] )
+
+    #maximum number of items per room
+    max_items = from_dungeon_level( [ [1, 1], [2, 4] ] )
+
+    #chance of each item. By default they have a chance of 0 at level 1, which then increases.
+    item_chances = {}
+    item_chances['heal'] = 35 #heal pots always show up
+    item_chances['lightning'] = from_dungeon_level([[25, 4]])
+    item_chances['fireball'] =  from_dungeon_level([[25, 6]])
+    item_chances['confuse'] =   from_dungeon_level([[10, 2]])
+
+    #choose a random number of monsters
+    num_monsters = libtcod.random_get_int(0, 0, max_monsters)
 
     for i in range(num_monsters):
         #choose a spot for the monster
@@ -489,7 +537,8 @@ def place_objects(room):
 #        else:
 #            #create monster D        
         if not is_blocked(x, y):
-            if libtcod.random_get_int(0, 0, 100) < 80: #80% chance of an orc
+            choice = random_choice(monster_chances)
+            if choice == 'orc': #80% chance of an orc
                 #Create an orc
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
                 ai_component = BasicMonster()
@@ -504,21 +553,21 @@ def place_objects(room):
             
             objects.append(monster)
             
-    num_items = libtcod.random_get_int(0, 0, MAX_ROOM_ITEMS)
+    num_items = libtcod.random_get_int(0, 0, max_items)
     for i in range(num_items):
         x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
         y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
         if not is_blocked(x, y):
-            dice = libtcod.random_get_int(0, 0, 100)
-            if dice < 70:
+            choice = random_choice(item_chances)
+            if choice == 'heal':
                 #creating a healing potion:
                 item_component = Item(use_function=cast_heal)
                 item = Object(x, y, '!', 'healing potion', libtcod.violet, always_visible=True, item=item_component)
-            elif dice < 70+10: 
+            elif choice == 'lightning': 
                 # chance of lightning scroll
                 item_component = Item(use_function=cast_lightning)
                 item = Object(x, y, '?', 'lightning scroll', libtcod.light_azure, always_visible=True, item=item_component)
-            elif dice < 70+10+10:
+            elif choice == 'fireball':
                 item_component = Item(use_function=cast_fireball)
                 item = Object(x, y, '*', 'fireball scroll', libtcod.orange, always_visible=True, item=item_component)
             else: 
@@ -912,13 +961,13 @@ def check_level_up():
         # time to level up!
         player.level += 1
         player.fighter.xp -= level_up_xp
-        message('You become more skillful and stronger!' + str(player.level) + '!', libtcod.yellow)
+        message('You become more skillful and stronger! Welcome to level ' + str(player.level) + '!', libtcod.yellow)
 
         # How does the player want to improve?
         choice = None
         while choice == None:
             choice = menu('Level up! Choose a stat to raise:\n',
-                ['Constitution (+20 HP, from ' + str(player.fighter.xp) + ')',
+                ['Constitution (+20 HP, from ' + str(player.fighter.max_hp) + ')',
                 'Strength (+1 attack, from ' + str(player.fighter.power) + ')',
                 'Agility (+1 defense, from ' + str(player.fighter.defense) + ')'], LEVEL_SCREEN_WIDTH)
         if choice == 0:
@@ -962,3 +1011,5 @@ main_menu()
 # * Add a computer, and if the player uses the computer it brings up an interactive command prompt, possibly
 #   in a separate window until they exit it. Make it gameplay relevant.
 #############################################
+
+# Alternatively, just remake Scarab of Ra. Have the font start out really big on the early, smaller levels.
