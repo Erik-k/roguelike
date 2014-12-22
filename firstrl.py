@@ -4,10 +4,10 @@ import textwrap
 import shelve
 
 #actual size of the window
-SCREEN_WIDTH = 80
-SCREEN_HEIGHT = 52
-MAP_WIDTH = 80
-MAP_HEIGHT = 45
+SCREEN_WIDTH = 160
+SCREEN_HEIGHT = 75
+MAP_WIDTH = 160
+MAP_HEIGHT = 65
 INVENTORY_WIDTH = 50
 
 #sizes and coords for the GUI
@@ -44,18 +44,19 @@ TORCH_RADIUS = 10
 fov_recompute = True # boolean for letting us know when to recompute the map fov
 
 # The map
-color_dark_wall = libtcod.Color(0,0,100)
-color_light_wall = libtcod.Color(130, 110, 50)
-color_dark_ground = libtcod.Color(50,50,150)
-color_light_ground = libtcod.Color(200,180,50)
+color_dark_wall = libtcod.Color(94, 38, 18)
+color_light_wall = libtcod.Color(135, 71, 6)
+color_dark_ground = libtcod.Color(128,10,10)
+color_light_ground = libtcod.Color(191,123,0)
 
 #============================================================= 
 # Drawable objects
 #============================================================= 
 
-class Object:
+class GamePiece:
+    """Anything which can be drawn. Players, NPCs, items, stairs, etc."""
     def __init__(self, x, y, char, name, color, blocks=False, always_visible=False, 
-                fighter=None, ai=None, item=None):
+                fighter=None, ai=None, item=None, equipment=None):
         self.x = x
         self.y = y
         self.char = char
@@ -63,16 +64,27 @@ class Object:
         self.color = color
         self.blocks = blocks
         self.always_visible = always_visible
+
         self.fighter = fighter
         if self.fighter: #if the fighter component was defined then let it know who owns it
             self.fighter.owner = self
+
         self.ai = ai
         if self.ai:
             self.ai.owner = self
-        self.item = item # I don't understand how this works! How can items be both an Item class and Object class/object?
+
+        self.item = item # I don't understand how this works! How can items be both an Item class and GamePiece class/object?
         if self.item:
             self.item.owner = self
         
+        self.equipment = equipment
+        if self.equipment: #let the Equipment component know who owns it
+            self.equipment.owner = self
+
+            #there must be an Item component for the Equipment component to work properly
+            self.item = Item() # create an Item?
+            self.item.owner = self
+
     def move(self, dx, dy):
         if not is_blocked(self.x + dx, self.y + dy):
             self.x += dx
@@ -91,42 +103,66 @@ class Object:
         self.move(dx, dy)
         
     def distance_to(self, other):
-        #return the distance to another object from this object
+        """Return the distance to another object from this object."""
         dx = other.x - self.x
         dy = other.y - self.y
         return math.sqrt(dx ** 2 + dy ** 2)        
         
     def distance(self, x, y):
-        #returns the distance between an object and a tile
+        """Returns the distance between an object and a tile."""
         return math.sqrt( (x - self.x)**2 + (y - self.y)**2 )
         
     def draw(self):
-        # set the color and then draw the object at its position
+        """Set the color and then draw the object at its position."""
         if (libtcod.map_is_in_fov(fov_map, self.x, self.y) or (self.always_visible and map[self.x][self.y].explored)):
             libtcod.console_set_default_foreground(con, self.color)
             libtcod.console_put_char(con, self.x, self.y, self.char, libtcod.BKGND_NONE)
         
     def clear(self):
-        # erase the character that represents this object
+        """Erase the character that represents this object."""
         libtcod.console_put_char(con, self.x, self.y, ' ', libtcod.BKGND_NONE)
         
     def send_to_back(self):
-        #make this thing get drawn first, so that everything else appears above it if on the same tile
-        #otherwise monster corpses get drawn on top of monsters sometimes
+        """
+        Make this thing get drawn first, so that everything else appears above it if on the same tile
+        otherwise monster corpses get drawn on top of monsters sometimes.
+        """
         global objects
         objects.remove(self)
         objects.insert(0, self)
         
 class Fighter:
-    #combat related properties and methods (monster, player, NPC)
+    """Combat related properties and methods (monster, player, NPC)."""
     def __init__(self, hp, defense, power, xp, death_function=None):
-        self.max_hp = hp
+        self.base_max_hp = hp
         self.hp = hp
-        self.defense = defense
-        self.power = power
+        self.base_defense = defense
+        self.base_power = power
         self.xp = xp
         self.death_function = death_function
         
+    # @property means it is a read-only getter of the class
+    # https://docs.python.org/2/library/functions.html#property
+    # Any call to fighter.power, even in the fighter.attack() method, uses these new more inclusive definitions.
+    # That is to say, in fighter.attack(), using self.power automatically uses these functions.
+    @property
+    def power(self):
+        """return actual power by summing up all bonuses"""
+        bonus = sum(equipment.power_bonus for equipment in get_all_equipped(self.owner))
+        return self.base_power + bonus
+
+    @property
+    def defense(self):
+        """return actual defense by summing up all bonuses"""
+        bonus = sum(equipment.defense_bonus for equipment in get_all_equipped(self.owner))
+        return self.base_defense + bonus
+
+    @property
+    def max_hp(self):
+        """return actual max_hp by summing up all bonuses"""
+        bonus = sum(equipment.max_hp_bonus for equipment in get_all_equipped(self.owner))
+        return self.base_max_hp + bonus
+
     def take_damage(self, damage):
         if damage > 0:
             self.hp -= damage
@@ -139,6 +175,7 @@ class Fighter:
             
     def attack(self, target):
         damage = self.power - target.fighter.defense
+
         if damage > 0:
             message(self.owner.name.capitalize() + ' attacks ' + target.name + ' for ' +str(damage)+ ' hit points.', libtcod.white)
             target.fighter.take_damage(damage)
@@ -151,10 +188,16 @@ class Fighter:
             self.hp = self.max_hp
 
 class Item:
+    """Item class defines usage, picking up, and dropping of GamePieces."""
     def __init__(self, use_function=None):
         self.use_function = use_function
-    #a generic method calls the item's use_function:
+    
     def use(self):
+        #Special case: if the object has the Equipment component, the "use" action is to equip/dequip
+        if self.owner.equipment:
+            self.owner.equipment.toggle_equip()
+            return
+
         #call the use_function if it is defined
         if self.use_function is None:
             message('The ' + self.owner.name + ' cannot be used.')
@@ -172,8 +215,17 @@ class Item:
             inventory.append(self.owner)
             objects.remove(self.owner)
             message('You picked up a ' + self.owner.name + '!', libtcod.green)
+
+        #Special case: automatically equip an eligible piece of equipment if the slot is unused
+        equipment = self.owner.equipment
+        if equipment and get_equipped_in_slot(equipment.slot) is None:
+            equipment.equip()
             
     def drop(self):
+        #Special case: if the object has the Equipment component, dequip it before dropping
+        if self.owner.equipment:
+            self.owner.equipment.dequip()
+
         #add to the map and remove from the player's inventory. Place it at the player's coordinates
         objects.append(self.owner)
         inventory.remove(self.owner)
@@ -181,12 +233,63 @@ class Item:
         self.owner.y = player.y
         message('You dropped a ' + self.owner.name + '.', libtcod.yellow)
             
+class Equipment:
+    """Anything which can be equipped on a character."""
+    def __init__(self, slot, power_bonus=0, defense_bonus=0, max_hp_bonus=0):
+        self.slot = slot #slots are defined with strings
+        self.power_bonus = power_bonus
+        self.defense_bonus = defense_bonus
+        self.max_hp_bonus = max_hp_bonus
+        self.is_equipped = False
+
+    def toggle_equip(self):
+        if self.is_equipped:
+            self.dequip()
+        else:
+            self.equip()
+
+    def equip(self):
+        if self.is_equipped: return
+
+        old_equipment = get_equipped_in_slot(self.slot)
+        if old_equipment is not None:
+            old_equipment.dequip()
+
+        #Equip object and show a message about it
+        self.is_equipped = True
+        message('Equipped ' + self.owner.name + ' on ' + self.slot + '.', libtcod.light_green)
+
+    def dequip(self):
+        # TODO: Make sure hp is below max_hp
+        if not self.is_equipped: return
+        self.is_equipped = False
+        message('You\'ve unequipped ' + self.owner.name + ' from ' + self.slot + '.', libtcod.light_yellow)
+
+def get_equipped_in_slot(slot): 
+    """Returns the equipment in a slot, or None if its empty."""
+    for obj in inventory:
+        if obj.equipment and obj.equipment.slot == slot and obj.equipment.is_equipped:
+            return obj.equipment
+    return None
+
+def get_all_equipped(obj):
+    """Returns a list of equipped items."""
+    if obj == player:
+        equipped_list = []
+        for item in inventory:
+            if item.equipment and item.equipment.is_equipped:
+                equipped_list.append(item.equipment)
+        return equipped_list
+    else:
+        #other objects such as monsters do not currently have equipment. If they do, change this.
+        return []
+
 #============================================================= 
 # Targeting and spell functions
 #============================================================= 
 
 def target_tile(max_range=None):
-    #return the position of a tile left-clicked in player's FOV (optionally in a range), or (None,None) if right-clicked.
+    """Return the position of a tile left-clicked in player's FOV (optionally in a range), or (None,None) if right-clicked."""
     global key, mouse
     while True:
         # render the screen, which erases the inventory screen and shows the names of objects under the mouse
@@ -204,7 +307,7 @@ def target_tile(max_range=None):
             return (None, None) # have to return a tuple with 2 output args
             
 def target_monster(max_range=None):
-    #returns a clicked monster inside FOV up to a range, or None if right-click to cancel
+    """Returns a clicked monster inside FOV up to a range, or None if right-click to cancel."""
     while True:
         (x, y) = target_tile(max_range)
         if x is None: #player canceled
@@ -216,9 +319,11 @@ def target_monster(max_range=None):
                 return obj
             
 def cast_heal():
-    # This method becomes the use_function property in the relevant Item object. So when Item.use_function() gets called, it calls
-    # this method, if the item had this passed as the parameter for use_function upon creation.
-    if player.fighter.hp == player.fighter.max_hp:
+    """
+    This method becomes the use_function property in the relevant Item object. So when Item.use_function() gets called, it calls
+    this method, if the item had this passed as the parameter for use_function upon creation.
+    """
+    if player.fighter.hp >= player.fighter.max_hp:
         message('You are already at full health.', libtcod.red)
         return 'cancelled'
         
@@ -226,7 +331,7 @@ def cast_heal():
     player.fighter.heal(HEAL_AMOUNT)
 
 def cast_lightning():
-    #find the closest enemy inside a max range and damage it
+    """Find the closest enemy inside a max range and damage it."""
     monster = closest_monster(LIGHTNING_RANGE)
     if monster is None:
         message('No enemy is close enough to strike.', libtcod.azure)
@@ -288,7 +393,7 @@ def cast_fireball():
 # This is preferable to swapping AI components like a state machine which can get overly complicated.
 
 class BasicMonster:
-    #AI module for a basic monster
+    """AI module for a basic monster."""
     def take_turn(self):
         #the monster takes its turn. If you can see it it can see you
         monster = self.owner
@@ -301,7 +406,7 @@ class BasicMonster:
                 monster.fighter.attack(player)
             
 class ConfusedMonster:
-    #AI for a confused monster. Must take previous AI as argument so it can revert to it after a while
+    """AI for a confused monster. Must take previous AI as argument so it can revert to it after a while."""
     def __init__(self, old_ai, num_turns=CONFUSE_NUM_TURNS):
         self.old_ai = old_ai
         self.num_turns = num_turns
@@ -315,6 +420,7 @@ class ConfusedMonster:
             message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)            
             
 def player_death(player):
+    """Turn the player into a corpse and declare game over."""
     global game_state
     message('Game Over!', libtcod.red)
     game_state = 'dead'
@@ -323,7 +429,7 @@ def player_death(player):
     player.color = libtcod.dark_red
     
 def monster_death(monster):
-    # transform into a corpse which doesn't block, can't move, and can't be attacked
+    """Transform into a corpse which doesn't block, can't move, and can't be attacked."""
     message(monster.name.capitalize() + ' dies! You gain ' + str(monster.fighter.xp) + ' experience points.', libtcod.orange)
     monster.char = '%'
     monster.color = libtcod.dark_red
@@ -339,7 +445,7 @@ def monster_death(monster):
 #==============================================================================
 
 class Tile:
-    # a tile in the map and its properties
+    """A tile in the map and its properties."""
     def __init__(self, blocked, block_sight = None):
         self.blocked = blocked #is it passable?
         self.explored = False
@@ -349,6 +455,7 @@ class Tile:
         self.block_sight = block_sight
 
 class Rect:
+    """A rectangle, with a center."""
     def __init__(self, x, y, w, h):
         self.x1 = x
         self.y1 = y
@@ -361,11 +468,12 @@ class Rect:
         return (center_x, center_y)        
         
     def intersect(self, other):
-        #returns true if this rectangle intersects with another one
+        """Returns true if this rectangle intersects with another one."""
         return (self.x1 <= other.x2 and self.x2 >= other.x1 and
                 self.y1 <= other.y2 and self.y2 >= other.y1)        
 #-------------------------------------------------------------
 def is_blocked(x,y):
+    """Is this square blocked by a map tile, or an object?"""
     #first see if the map tile itself is blocking
     if map[x][y].blocked:
         return True
@@ -451,7 +559,7 @@ def make_map():
             num_rooms += 1
 
     #create stairs at the center of the last room
-    stairs = Object(new_x, new_y, '<', 'stairs',  libtcod.white, always_visible=True)
+    stairs = GamePiece(new_x, new_y, '>', 'stairs',  libtcod.white, always_visible=True)
     objects.append(stairs)
     stairs.send_to_back() #so that it gets drawn below monsters
 
@@ -467,6 +575,13 @@ def next_level():
     initialize_fov()
     
 def random_choice_index(chances):
+    """
+    When given a list of chances, such as [80, 10, 10], it will randomly choose one according to
+    its relative probability from that list. Accepts different formats, not just percentages, because
+    it chooses from 1 to the sum of the chances. Example: [1, 1, 1, 2] means that the last item has a 
+    40 percent chance (2/5) and the first three items each have a 20 percent chance (1/5) of having 
+    their index returned. 
+    """
     dice = libtcod.random_get_int(0, 1, sum(chances))
 
     running_sum = 0
@@ -479,26 +594,29 @@ def random_choice_index(chances):
         choice += 1
 
 def random_choice(chances_dict):
-    #choose an option from a dictionary of chances, and return the key
+    """Choose an option from a dictionary of {'thing': chance} pairs, and return the corresponding key."""
     chances = chances_dict.values() 
     strings = chances_dict.keys()
 
     return strings[random_choice_index(chances)] # returns the key which corresponds to the chosen chance
 
 def from_dungeon_level(table):
-    #returns a value that depends on level. The table must be a list of [value, level] pairs. For example, 
-    # a square progression would be:
-    # [1, 1]
-    # [4, 2]
-    # [9, 3]
-    # which is represented as [[1, 1], [4, 2], [9, 3]]
-    # TODO: Use sorting to enforce the assumption that the table is in ascending order.
+    """
+    Returns a value that depends on level. The table must be a list of [value, level] pairs. For example, 
+    a square progression of [x**2, x] would be:
+    [1, 1]
+    [4, 2]
+    [9, 3]
+    which is represented as [[1, 1], [4, 2], [9, 3]]
+    TODO: Use sorting to enforce the assumption that the table is in ascending order.
+    """
     for (value, level) in reversed(table):
         if dungeon_level >= level:
             return value
     return 0  #default is zero
 
 def place_objects(room):
+    """Puts stuff all over the map AFTER the map has been created."""
     # max number of monsters per room:
     max_monsters = from_dungeon_level( [ [2, 1], [3, 4], [5, 6] ] )
 
@@ -516,7 +634,9 @@ def place_objects(room):
     item_chances['lightning'] = from_dungeon_level([[25, 4]])
     item_chances['fireball'] =  from_dungeon_level([[25, 6]])
     item_chances['confuse'] =   from_dungeon_level([[10, 2]])
-
+    item_chances['sword'] = 25
+    item_chances['shield'] = 50
+ 
     #choose a random number of monsters
     num_monsters = libtcod.random_get_int(0, 0, max_monsters)
 
@@ -542,13 +662,13 @@ def place_objects(room):
                 #Create an orc
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
                 ai_component = BasicMonster()
-                monster = Object(x, y, 'o', 'orc', libtcod.desaturated_green, blocks=True,
+                monster = GamePiece(x, y, 'o', 'orc', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
             else:
                 #Create a troll
                 fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=monster_death)
                 ai_component = BasicMonster()
-                monster = Object(x, y, 'T', 'troll', libtcod.darker_green, blocks=True,
+                monster = GamePiece(x, y, 'T', 'troll', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
             
             objects.append(monster)
@@ -562,17 +682,23 @@ def place_objects(room):
             if choice == 'heal':
                 #creating a healing potion:
                 item_component = Item(use_function=cast_heal)
-                item = Object(x, y, '!', 'healing potion', libtcod.violet, always_visible=True, item=item_component)
+                item = GamePiece(x, y, '!', 'healing potion', libtcod.violet, always_visible=True, item=item_component)
             elif choice == 'lightning': 
                 # chance of lightning scroll
                 item_component = Item(use_function=cast_lightning)
-                item = Object(x, y, '?', 'lightning scroll', libtcod.light_azure, always_visible=True, item=item_component)
+                item = GamePiece(x, y, '?', 'lightning scroll', libtcod.light_azure, always_visible=True, item=item_component)
             elif choice == 'fireball':
                 item_component = Item(use_function=cast_fireball)
-                item = Object(x, y, '*', 'fireball scroll', libtcod.orange, always_visible=True, item=item_component)
+                item = GamePiece(x, y, '*', 'fireball scroll', libtcod.orange, always_visible=True, item=item_component)
+            elif choice == 'sword':
+                equipment_component = Equipment(slot='right hand', power_bonus=3)
+                item = GamePiece(x, y, '/', 'sword', libtcod.sky, equipment=equipment_component)
+            elif choice == 'shield':
+                equipment_component = Equipment(slot='left hand', defense_bonus=1, max_hp_bonus=10)
+                item = GamePiece(x, y, '0', 'shield', libtcod.brass, equipment=equipment_component)
             else: 
                 item_component = Item(use_function=cast_confuse)
-                item = Object(x, y, '#', 'scroll of confusion', libtcod.light_yellow, always_visible=True, item=item_component)
+                item = GamePiece(x, y, '#', 'scroll of confusion', libtcod.light_yellow, always_visible=True, item=item_component)
                 
             objects.append(item)
             item.send_to_back() #make items appear below other objects
@@ -581,7 +707,11 @@ def place_objects(room):
 # Graphics       
 #==============================================================================
 
-def message(new_msg, color=libtcod.white):      
+def message(new_msg, color=libtcod.white):     
+    """
+    Fills the game_msgs list with nicely word-wrapped tuples of (line, color). game_msgs is later displayed
+    in the render_all method.
+    """ 
     new_msg_lines = textwrap.wrap(new_msg, MSG_WIDTH)
     for line in new_msg_lines:
         #if the buffer is full, remove the first line to make room for the new one
@@ -590,7 +720,10 @@ def message(new_msg, color=libtcod.white):
         game_msgs.append( (line, color) )
             
 def menu(header, options, width):
-    #header is title at top of window. Options is list of strings. Height is implied by options length
+    """
+    Creates a menu with a header as the title at the top of the window, options is the list of strings
+    to display, and height is formed from the header + the length of the word-wrapped options. 
+    """
     if len(options) > 26: raise ValueError('Cannot have a menu with more than 26 options.')
 
     #calculate total height for the header after auto-wrap, and then one line per option
@@ -631,11 +764,18 @@ def menu(header, options, width):
     return None
     
 def inventory_menu(header):
-    #show a menu with each item of the inventory as an option
+    """Show a menu with each item of the inventory as an option."""
     if len(inventory) == 0:
         options = ['Inventory is empty']
     else:
-        options = [item.name for item in inventory]
+        # Create a list of items which will be passed to the menu() method for displaying
+        options = []
+        for item in inventory:
+            text = item.name
+            #show additional information if it is equipped
+            if item.equipment and item.equipment.is_equipped:
+                text = text + ' (on ' + item.equipment.slot + ')'
+            options.append(text)
     
     index = menu(header, options, INVENTORY_WIDTH)
     #if an item was chosen, return it
@@ -643,7 +783,9 @@ def inventory_menu(header):
     return inventory[index].item
             
 def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
-    #Render a bar. First calculate the width of the bar:
+    """Render a bar, such as a health or exp bar, with text in the middle."""
+
+    #First calculate the width of the bar:
     bar_width = int(float(value) / maximum * total_width)
     
     #render background first
@@ -659,6 +801,7 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
         name + ': ' + str(value) + '/' + str(maximum))
         
 def render_all():
+    """Draw everything on to the screen. This is where all the consoles get blit'd."""
     global fov_map, color_dark_wall, color_light_wall
     global color_dark_ground, color_light_ground
     global fov_recompute
@@ -720,6 +863,10 @@ def render_all():
 # Keyboard and Mouse management        
 #==============================================================================
 def player_move_or_attack(dx, dy):
+    """
+    This function determines whether the player moves into an empty space or interacts 
+    with a creature or thing in that space (which means no movement).
+    """
     global fov_recompute
     
     #the coordinates the player is moving to or attacking into
@@ -751,6 +898,7 @@ def get_names_under_mouse():
     return names.capitalize() 
     
 def handle_keys():
+    """Handles all keyboard input."""
     global fov_recompute
     global key
 
@@ -804,7 +952,7 @@ def handle_keys():
                 if chosen_item is not None:
                     chosen_item.drop()
 
-            if key_char == '<':
+            if key_char == '>':
                 #go down stairs
                 if stairs.x == player.x and stairs.y == player.y:
                     next_level()
@@ -827,7 +975,7 @@ def new_game():
     
     #Creating the object representing the player:
     fighter_component = Fighter(hp=30, defense=2, power=5, xp=0, death_function=player_death) #creating the fighter aspect of the player
-    player = Object(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component)
+    player = GamePiece(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component)
     player.level = 1
     dungeon_level = 1
 
@@ -844,6 +992,7 @@ def new_game():
     message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod.', libtcod.red)
 
 def initialize_fov():
+    """This is needed to allow field of view stuff."""
     global fov_recompute, fov_map
     fov_recompute = True
     
@@ -856,6 +1005,7 @@ def initialize_fov():
     libtcod.console_clear(con)
 
 def play_game():
+    """This function contains the while loop."""
     #====================
     # THE MAIN LOOP
     #====================
@@ -890,9 +1040,14 @@ def play_game():
                     object.ai.take_turn()
                     
 def msgbox(text, width=50):
-    menu(text, [], width) #use our menu() function as a sort of "message box"
+    """
+    Use our menu() function as a sort of message box. Everything counts as the header, with no body,
+    even though it can be multi line.
+    """
+    menu(text, [], width) 
 
 def main_menu():
+    """Displays splash screen and initial options such as new game, continue, save/load."""
     img = libtcod.image_load('menu_background1.png')
     
     while not libtcod.console_is_window_closed():
@@ -971,12 +1126,12 @@ def check_level_up():
                 'Strength (+1 attack, from ' + str(player.fighter.power) + ')',
                 'Agility (+1 defense, from ' + str(player.fighter.defense) + ')'], LEVEL_SCREEN_WIDTH)
         if choice == 0:
-            player.fighter.max_hp += 20
+            player.fighter.base_max_hp += 20
             player.fighter.hp += 20
         elif choice == 1:
-            player.fighter.power += 1
+            player.fighter.base_power += 1
         elif choice == 2:
-            player.fighter.defense += 1
+            player.fighter.base_defense += 1
 
 #==============================================================================
 # Start the game!
