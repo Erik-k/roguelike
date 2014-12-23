@@ -86,14 +86,17 @@ class GamePiece:
             self.item.owner = self
 
     def move(self, dx, dy):
+        """Move to a coordinate if it isn't blocked."""
         if not is_blocked(self.x + dx, self.y + dy):
             self.x += dx
             self.y += dy
             
     def move_towards(self, target_x, target_y):
-        #vector from this object to the target, and distance
-        dx = target_x - self.x
-        dy = target_y - self.y
+        initialize_pathmap()
+        libtcod.path_compute(path, self.x, self.y, target_x, target_y)
+        pathx, pathy = libtcod.path_walk(path, True)
+        dx = pathx - self.x
+        dy = pathy - self.y
         distance = math.sqrt(dx ** 2 + dy ** 2)
  
         #normalize it to length 1 (preserving direction), then round it and
@@ -623,7 +626,7 @@ def place_objects(room):
     #chance of each monster
     monster_chances = {} # so that we can build the dict below
     monster_chances['orc'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
-    monster_chances['troll'] = from_dungeon_level( [ [15, 3], [30, 5], [60, 7] ] )
+    monster_chances['troll'] = from_dungeon_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
 
     #maximum number of items per room
     max_items = from_dungeon_level( [ [1, 1], [2, 4] ] )
@@ -635,7 +638,7 @@ def place_objects(room):
     item_chances['fireball'] =  from_dungeon_level([[25, 6]])
     item_chances['confuse'] =   from_dungeon_level([[10, 2]])
     item_chances['sword'] = 25
-    item_chances['shield'] = 50
+    item_chances['shield'] = 15
  
     #choose a random number of monsters
     num_monsters = libtcod.random_get_int(0, 0, max_monsters)
@@ -963,6 +966,11 @@ def handle_keys():
                 msgbox('Character Information\n\nLevel: ' + str(player.level) + '\nExperience: ' + str(player.fighter.xp) +
                     '\nExperience to level up: ' + str(level_up_xp) + '\n\nMaximum HP: ' + str(player.fighter.max_hp) +
                     '\nAttack: ' + str(player.fighter.power) + '\nDefense: ' + str(player.fighter.defense), CHARACTER_SCREEN_WIDTH)
+
+            if key_char == 'h':
+                #show help screen
+                msgbox('The available keys are:\nKeypad: movement\ng: get an item\ni: show the inventory\n' +
+                    'd: drop an item\n>: Take down stairs\nc: Show character information.', CHARACTER_SCREEN_WIDTH)
                     
             return 'didnt_take_turn'
          
@@ -1003,6 +1011,11 @@ def initialize_fov():
             libtcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
             
     libtcod.console_clear(con)
+
+def initialize_pathmap():
+    """Allocate a path using the FOV map."""
+    global path, fov_map
+    path = libtcod.path_new_using_map(fov_map)
 
 def play_game():
     """This function contains the while loop."""
