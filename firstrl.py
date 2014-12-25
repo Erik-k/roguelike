@@ -1,13 +1,17 @@
+# See if removing the "self.owner = self" junk from the classes makes any difference.
+# Do instances still have proper owners even if I dont explicitly assign them?
+
 import libtcodpy as libtcod
 import math
 import textwrap
 import shelve
+from time import sleep
 
 #actual size of the window
-SCREEN_WIDTH = 160
-SCREEN_HEIGHT = 75
-MAP_WIDTH = 160
-MAP_HEIGHT = 65
+SCREEN_WIDTH = 80
+SCREEN_HEIGHT = 50
+MAP_WIDTH = 80
+MAP_HEIGHT = 43
 INVENTORY_WIDTH = 50
 
 #sizes and coords for the GUI
@@ -23,6 +27,9 @@ CHARACTER_SCREEN_WIDTH = 30
 ROOM_MAX_SIZE = 10
 ROOM_MIN_SIZE = 6
 MAX_ROOMS = 30
+BUILDING_MAX_SIZE = 10
+BUILDING_MIN_SIZE = 6
+MAX_BUILDINGS = 10
 
 # gameplay constants
 HEAL_AMOUNT = 4
@@ -449,13 +456,10 @@ def monster_death(monster):
 
 class Tile:
     """A tile in the map and its properties."""
-    def __init__(self, blocked, block_sight = None):
+    def __init__(self, blocked, block_sight = True):
         self.blocked = blocked #is it passable?
-        self.explored = False
-        # by default if it is blocked (not passable) it also blocks sight
-        # I think this code could also be: "if block_sight:" and have "block_sight=False" above
-        if block_sight is None: block_sight = blocked
         self.block_sight = block_sight
+        self.explored = False
 
 class Rect:
     """A rectangle, with a center."""
@@ -471,9 +475,12 @@ class Rect:
         return (center_x, center_y)        
         
     def intersect(self, other):
-        """Returns true if this rectangle intersects with another one."""
+        """Returns true if this rectangle intersects with another one. """
         return (self.x1 <= other.x2 and self.x2 >= other.x1 and
-                self.y1 <= other.y2 and self.y2 >= other.y1)        
+                self.y1 <= other.y2 and self.y2 >= other.y1)
+
+    #Make a function which returns the middle of each wall, to be used for placing doors.        
+
 #-------------------------------------------------------------
 def is_blocked(x,y):
     """Is this square blocked by a map tile, or an object?"""
@@ -488,12 +495,35 @@ def is_blocked(x,y):
     return False
 
 def create_room(room):
+    """Makes the tiles in a rectangle passable."""
     global map
-    # make the tiles in a rectangle passable
+
     for x in range(room.x1 + 1, room.x2):
         for y in range(room.y1 + 1, room.y2):
             map[x][y].blocked = False
             map[x][y].block_sight = False
+
+def create_building(building):
+    """Very similar to create_room but puts a border around it."""
+    global map
+
+    for x in range(building.x1, building.x2):
+        for y in range(building.y1, building.y2):
+            map[x][y].blocked = False
+            map[x][y].block_sight = False
+
+    #Create walls of building 
+    for x in range(building.x1, building.x2):
+        map[x][building.y1].blocked = True
+        map[x][building.y1].block_sight = True
+        map[x][building.y2].blocked = True
+        map[x][building.y2].block_sight = True
+    for y in range(building.y1, building.y2):
+        map[building.x1][y].blocked = True
+        map[building.x1][y].block_sight = True
+        map[building.x2][y].blocked = True
+        map[building.x2][y].block_sight = True
+
 
 def create_h_tunnel(x1, x2, y):
     global map
@@ -507,7 +537,61 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].blocked = False
         map[x][y].block_sight = False
 
-def make_map():
+def make_surface_map():
+    """
+    Creates a map which is open by default, and then filled with boulders, mesas and buildings.
+    Uses a 2D noise generator. The map has an impenetrable border.
+    """
+    global map, objects, stairs
+    objects = [player]
+
+    noise2d = libtcod.noise_new(2) #create a 2D noise generator
+    libtcod.noise_set_type(noise2d, libtcod.NOISE_SIMPLEX) #tell it to use simplex noise for higher contrast
+
+    map = [[ Tile(blocked=False, block_sight=False) for y in range(MAP_HEIGHT)] for x in range(MAP_WIDTH) ]
+    #Put a border around the map so the characters can't go off the edge of the world
+    for x in range(0, MAP_WIDTH):
+        map[x][0].blocked = True
+        map[x][0].block_sight = True
+        map[x][MAP_HEIGHT-1].blocked = True
+        map[x][MAP_HEIGHT-1].block_sight = True
+    for y in range(0, MAP_HEIGHT):
+        map[0][y].blocked = True
+        map[0][y].block_sight = True
+        map[MAP_WIDTH-1][y].blocked = True
+        map[MAP_WIDTH-1][y].block_sight = True
+
+    # Create natural looking landscape
+    for x in range(1, MAP_WIDTH-1):
+        for y in range(1, MAP_HEIGHT-1):
+            if libtcod.noise_get_turbulence(noise2d, [x, y], 128.0, libtcod.NOISE_SIMPLEX) < 0.4:
+                #Turbulent simplex noise returns values between 0.0 and 1.0, with many values greater than 0.9.
+                map[x][y].blocked = True
+                map[x][y].block_sight = True
+
+    buildings = []
+    num_buildings = 0
+    for r in range(MAX_BUILDINGS):
+        w = libtcod.random_get_int(0, BUILDING_MIN_SIZE, BUILDING_MAX_SIZE)
+        h = libtcod.random_get_int(0, BUILDING_MIN_SIZE, BUILDING_MAX_SIZE)
+        x = libtcod.random_get_int(0, 0, MAP_WIDTH - w - 1)
+        y = libtcod.random_get_int(0, 0, MAP_HEIGHT - h - 1)
+        new_building = Rect(x, y, w, h)
+        create_building(new_building)
+        buildings.append(new_building)
+        num_buildings += 1
+
+    #Make a spot for the player to start
+    startingx = int(MAP_WIDTH/2)
+    startingy = int(MAP_HEIGHT/2)
+    map[startingx][startingy].blocked=False
+    map[startingx][startingy].block_sight=False
+    player.x = startingx
+    player.y = startingy
+
+
+def make_underground_map():
+    """Creates rectangular rooms and connects them with straight hallways. The default map is filled."""
     global map, objects, stairs
     
     objects = [player]    
@@ -515,7 +599,7 @@ def make_map():
     # fill map with blocked=True or blocked=False tiles
     # By using Python's range function this creates the list of tiles, even though its
     # just two for statements.
-    map = [[ Tile(True)
+    map = [[ Tile(blocked=True, block_sight=True)
         for y in range(MAP_HEIGHT)]
             for x in range(MAP_WIDTH)]
     
@@ -574,7 +658,7 @@ def next_level():
 
     message('You descend deeper into the dungeon...', libtcod.red)
     dungeon_level += 1
-    make_map() # a fresh level!
+    make_underground_map() # a fresh level!
     initialize_fov()
     
 def random_choice_index(chances):
@@ -625,8 +709,8 @@ def place_objects(room):
 
     #chance of each monster
     monster_chances = {} # so that we can build the dict below
-    monster_chances['orc'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
-    monster_chances['troll'] = from_dungeon_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
+    monster_chances['robot'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
+    monster_chances['security bot'] = from_dungeon_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
 
     #maximum number of items per room
     max_items = from_dungeon_level( [ [1, 1], [2, 4] ] )
@@ -661,17 +745,17 @@ def place_objects(room):
 #            #create monster D        
         if not is_blocked(x, y):
             choice = random_choice(monster_chances)
-            if choice == 'orc': #80% chance of an orc
-                #Create an orc
+            if choice == 'robot': 
+                #Create an minor enemy
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
                 ai_component = BasicMonster()
-                monster = GamePiece(x, y, 'o', 'orc', libtcod.desaturated_green, blocks=True,
+                monster = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
             else:
-                #Create a troll
+                #Create a major enemy
                 fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=monster_death)
                 ai_component = BasicMonster()
-                monster = GamePiece(x, y, 'T', 'troll', libtcod.darker_green, blocks=True,
+                monster = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
             
             objects.append(monster)
@@ -727,6 +811,7 @@ def menu(header, options, width):
     Creates a menu with a header as the title at the top of the window, options is the list of strings
     to display, and height is formed from the header + the length of the word-wrapped options. 
     """
+    #global end_credits
     if len(options) > 26: raise ValueError('Cannot have a menu with more than 26 options.')
 
     #calculate total height for the header after auto-wrap, and then one line per option
@@ -755,8 +840,19 @@ def menu(header, options, width):
     y = SCREEN_HEIGHT/2 - height/2
     libtcod.console_blit(window, 0, 0, width, height, 0, x, y, 1.0, 0.7)
     
-    #present the rot console to the player and wait for a key-press
+    #Display the libtcod credits. 
+    # TODO: Put this in a separate console so that it can just run on its own without blocking
+    # access to the menu. Make sure to kill that console if the user chooses an option so that
+    # it doesnt keep running on top of whatever is next.
+    # while not end_credits: 
+    #     end_credits = libtcod.console_credits_render(5, 5, False)
+    #     libtcod.console_flush()
+    #     key = libtcod.console_check_for_keypress()
+    #     if key.vk is not libtcod.KEY_NONE: break
+
+    #present the root console to the player and wait for a key-press
     libtcod.console_flush()
+    sleep(0.4) # Need to debounce otherwise the menus are super irritating
     key = libtcod.console_wait_for_keypress(True)
     if key.vk == libtcod.KEY_ENTER and key.lalt:
         #Alt+Enter: toggle fullscreen
@@ -904,6 +1000,7 @@ def handle_keys():
     """Handles all keyboard input."""
     global fov_recompute
     global key
+    global map
 
     if key.vk == libtcod.KEY_ENTER and key.lalt:
         #Alt+Enter: toggle fullscreen
@@ -971,6 +1068,16 @@ def handle_keys():
                 #show help screen
                 msgbox('The available keys are:\nKeypad: movement\ng: get an item\ni: show the inventory\n' +
                     'd: drop an item\n>: Take down stairs\nc: Show character information.', CHARACTER_SCREEN_WIDTH)
+
+            if key_char == 'm':
+                #Debugging - display whole map
+                for y in range(MAP_HEIGHT):
+                    for x in range(MAP_WIDTH):
+                        map[x][y].explored = True
+
+            if key_char == 'p':
+                #Debugging - give us the player's coordinates
+                print 'Player position is: (' + str(player.x) + ', ' + str(player.y) + ')'
                     
             return 'didnt_take_turn'
          
@@ -988,7 +1095,7 @@ def new_game():
     dungeon_level = 1
 
     #generate map, but at this point its not drawn to the screen    
-    make_map()
+    make_surface_map()
     initialize_fov()
 
     game_state = 'playing'
@@ -997,7 +1104,7 @@ def new_game():
     #create the list of game messages and their colors.
     game_msgs = []    
 
-    message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod.', libtcod.red)
+    message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.', libtcod.red)
 
 def initialize_fov():
     """This is needed to allow field of view stuff."""
@@ -1061,8 +1168,9 @@ def msgbox(text, width=50):
 
 def main_menu():
     """Displays splash screen and initial options such as new game, continue, save/load."""
+    global end_credits
     img = libtcod.image_load('menu_background1.png')
-    
+    end_credits = False
     while not libtcod.console_is_window_closed():
         #show the background image at 2x the normal resolution using special font characters to do sub-cell shading:
         libtcod.image_blit_2x(img, 0, 0, 0)
@@ -1073,7 +1181,7 @@ def main_menu():
                                  'MARXIST MARTIANS!')
         libtcod.console_print_ex(0, SCREEN_WIDTH/2, SCREEN_HEIGHT-2, libtcod.BKGND_NONE, libtcod.CENTER, 
                                  'By K\'NEK-TEK')
-        
+
         #show options and wait for the player's choice
         choice = menu('', ['New Game', 'Continue', 'Quit'], 24)
         if choice == 0: #new game
@@ -1149,8 +1257,10 @@ def check_level_up():
 #==============================================================================
 # Start the game!
 #==============================================================================
-libtcod.console_set_custom_font('libtcod-1.5.1/data/fonts/arial12x12.png', libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_TCOD)
-libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'python/libtcod tutorial', False)
+libtcod.console_set_custom_font('libtcod-1.5.1/data/fonts/terminal16x16_gs_ro.png', 
+    libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_ASCII_INROW)
+libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Marxist Martians', False)
+
 # off screen console "con"
 con = libtcod.console_new(MAP_WIDTH, MAP_HEIGHT)
 # GUI panel console "panel"
@@ -1169,8 +1279,8 @@ main_menu()
 # * Set it outside on Martian soil- red colors, day/night cycle. Enlarge the play area. Buildings should
 #   be placed by the map after terrain is created, as white squares which are free to interrupt the terrain.
 # * Choose a really neat main menu image- something like Gagarin Deep Space.
-# * Implement a help menu that shows available key commands. Display it like the inventory window.
-# * Display a separate game window to practice the difference between consoles and windows.
+# 
+# 
 # * Scientists, laborers, engineers, with specializations:
 #   Botanist (farmer), Engineer (builder), Laborer (?? operators?). Use the object component method described in 
 #   tutorial 6.
