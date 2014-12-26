@@ -480,7 +480,10 @@ def monster_death(monster):
 #==============================================================================
 
 class Tile:
-    """A tile in the map and its properties."""
+    """
+    A tile in the map and its properties.
+    Make sure that if char, fore, or back are changed to non-default, that they are ALL changed.
+    """
     def __init__(self, blocked, block_sight=True, char=None, fore=None, back=None):
         self.blocked = blocked #is it passable?
         self.block_sight = block_sight
@@ -621,9 +624,10 @@ def make_surface_map():
     for place in buildings:
         doorx, doory = place.middle_of_wall('left')
         if map[doorx][doory].blocked: # don't bother putting a door in the middle of an empty room
-            print 'doorx, doory are: ' + str(doorx) + ' ' + str(doory)
             map[doorx][doory].char = '#'
-            map[doorx][doory].blocked = False
+            map[doorx][doory].blocked = False 
+            map[doorx][doory].fore = libtcod.white
+            map[doorx][doory].back = libtcod.grey
 
     #Make a spot for the player to start
     startingx = int(MAP_WIDTH/2)
@@ -776,17 +780,7 @@ def place_objects(room):
         x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
         y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
         
-        #Example for how to create a variety of objects:
-#        #chances: 20% monster A, 40% monster B, 10% monster C, 30% monster D:
-#        choice = libtcod.random_get_int(0, 0, 100)
-#        if choice < 20:
-#            #create monster A
-#        elif choice < 20+40:
-#            #create monster B
-#        elif choice < 20+40+10:
-#            #create monster C
-#        else:
-#            #create monster D        
+        #Create the monster
         if not is_blocked(x, y):
             choice = random_choice(monster_chances)
             if choice == 'robot': 
@@ -804,6 +798,7 @@ def place_objects(room):
             
             objects.append(monster)
             
+    #Create and place items
     num_items = libtcod.random_get_int(0, 0, max_items)
     for i in range(num_items):
         x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
@@ -954,28 +949,32 @@ def render_all():
         fov_recompute = False
         libtcod.map_compute_fov(fov_map, player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
 
-    #go through all tiles and set background according to FOV
+    # go through all tiles and set character, foreground and background according to FOV
     for y in range(MAP_HEIGHT):
         for x in range(MAP_WIDTH):
             visible = libtcod.map_is_in_fov(fov_map, x, y)
             wall = map[x][y].block_sight
-            if map[x][y].char is None:
-                if not visible:
-                    if map[x][y].explored:
-                        if wall:
-                            libtcod.console_set_char_background(con, x, y, color_dark_wall, libtcod.BKGND_SET)
-                        else:
-                            libtcod.console_set_char_background(con, x, y, color_dark_ground, libtcod.BKGND_SET)
-                else:
-                    #visible things
+            if not visible:
+                if map[x][y].explored:
+                    # Draw things outside of vision which are remembered
+                    if wall:
+                        libtcod.console_set_char_background(con, x, y, color_dark_wall, libtcod.BKGND_SET)
+                    else:
+                        libtcod.console_set_char_background(con, x, y, color_dark_ground, libtcod.BKGND_SET)
+            else:
+                # Currently visible things
+                if map[x][y].char is None and map[x][y].fore is None and map[x][y].back is None:
+                # We are using the default
                     if wall:
                         libtcod.console_set_char_background(con, x, y, color_light_wall, libtcod.BKGND_SET)
                     else:
                         libtcod.console_set_char_background(con, x, y, color_light_ground, libtcod.BKGND_SET)
                     map[x][y].explored = True
-            else:
-                #Draw special characters according to Tile.char
-                libtcod.console_put_char_ex(con, x, y, map[x][y].char, libtcod.white, libtcod.dark_blue)
+                elif map[x][y].char is not None and map[x][y].fore is not None and map[x][y] is not None:
+                    #Draw special characters according to Tile.char, Tile.fore, Tile.back
+                    libtcod.console_put_char_ex(con, x, y, map[x][y].char, map[x][y].fore, map[x][y].back)
+                else:
+                    print 'ERROR: Bad tile property. Make sure tile.char, tile.fore, and tile.back are all defined.'
     for object in objects:
         if object != player:
             object.draw()
@@ -1226,7 +1225,7 @@ def main_menu():
         #show the game's title and opening credits
         libtcod.console_set_default_foreground(0, libtcod.light_yellow)
         libtcod.console_print_ex(0, SCREEN_WIDTH/2, SCREEN_HEIGHT/2-4, libtcod.BKGND_NONE, libtcod.CENTER, 
-                                 'MARXIST MARTIANS!')
+                                 'MANY MARTIANS!')
         libtcod.console_print_ex(0, SCREEN_WIDTH/2, SCREEN_HEIGHT-2, libtcod.BKGND_NONE, libtcod.CENTER, 
                                  'By K\'NEK-TEK')
 
@@ -1307,7 +1306,7 @@ def check_level_up():
 #==============================================================================
 libtcod.console_set_custom_font('libtcod-1.5.1/data/fonts/terminal16x16_gs_ro.png', 
     libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_ASCII_INROW)
-libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Marxist Martians', False)
+libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Many Martians', False)
 
 # off screen console "con"
 con = libtcod.console_new(MAP_WIDTH, MAP_HEIGHT)
