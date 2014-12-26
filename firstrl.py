@@ -57,6 +57,31 @@ color_dark_ground = libtcod.Color(128,10,10)
 color_light_ground = libtcod.Color(191,123,0)
 
 #============================================================= 
+# Implement a switch-case construction, from this website: http://code.activestate.com/recipes/410692/
+# Python doesn't have switch-case statements but I want to use it.
+#============================================================= 
+
+class switch(object):
+    def __init__(self, value):
+        self.value = value
+        self.fall = False
+
+    def __iter__(self):
+        """Return the match method once, then stop"""
+        yield self.match
+        raise StopIteration
+    
+    def match(self, *args):
+        """Indicate whether or not to enter a case suite"""
+        if self.fall or not args:
+            return True
+        elif self.value in args:
+            self.fall = True
+            return True
+        else:
+            return False
+
+#============================================================= 
 # Drawable objects
 #============================================================= 
 
@@ -456,9 +481,12 @@ def monster_death(monster):
 
 class Tile:
     """A tile in the map and its properties."""
-    def __init__(self, blocked, block_sight = True):
+    def __init__(self, blocked, block_sight=True, char=None, fore=None, back=None):
         self.blocked = blocked #is it passable?
         self.block_sight = block_sight
+        self.char = char #for special characters like building components
+        self.fore = fore #special foreground color
+        self.back = back #special background color
         self.explored = False
 
 class Rect:
@@ -470,6 +498,7 @@ class Rect:
         self.y2 = y + h        
         
     def center(self):
+        """Returns the coordinates for the center of the rectangle."""
         center_x = (self.x1 + self.x2) / 2
         center_y = (self.y1 + self.y2) / 2
         return (center_x, center_y)        
@@ -478,8 +507,15 @@ class Rect:
         """Returns true if this rectangle intersects with another one. """
         return (self.x1 <= other.x2 and self.x2 >= other.x1 and
                 self.y1 <= other.y2 and self.y2 >= other.y1)
-
-    #Make a function which returns the middle of each wall, to be used for placing doors.        
+       
+    def middle_of_wall(self, side):
+        """Returns the coordinates of the middle of a wall of a rectangle. Useful for placing a door there."""
+        for case in switch(side):
+            if case('left'): return ( self.x1, int((self.y1 + self.y2) / 2) )
+            if case('right'): return ( self.x2, int((self.y1+self.y2)/2) )
+            if case('top'): return (int((self.x1 + self.x2)/2), self.y1)
+            if case('bottom'): return (int((self.x1 + self.x2)/2), self.y2)
+            if case(): print 'Error: invalid side specified in Rect.middle_of_wall'
 
 #-------------------------------------------------------------
 def is_blocked(x,y):
@@ -580,6 +616,14 @@ def make_surface_map():
         create_building(new_building)
         buildings.append(new_building)
         num_buildings += 1
+
+    #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
+    for place in buildings:
+        doorx, doory = place.middle_of_wall('left')
+        if map[doorx][doory].blocked: # don't bother putting a door in the middle of an empty room
+            print 'doorx, doory are: ' + str(doorx) + ' ' + str(doory)
+            map[doorx][doory].char = '#'
+            map[doorx][doory].blocked = False
 
     #Make a spot for the player to start
     startingx = int(MAP_WIDTH/2)
@@ -915,19 +959,23 @@ def render_all():
         for x in range(MAP_WIDTH):
             visible = libtcod.map_is_in_fov(fov_map, x, y)
             wall = map[x][y].block_sight
-            if not visible:
-                if map[x][y].explored:
-                    if wall:
-                        libtcod.console_set_char_background(con, x, y, color_dark_wall, libtcod.BKGND_SET)
-                    else:
-                        libtcod.console_set_char_background(con, x, y, color_dark_ground, libtcod.BKGND_SET)
-            else:
-                #visible things
-                if wall:
-                    libtcod.console_set_char_background(con, x, y, color_light_wall, libtcod.BKGND_SET)
+            if map[x][y].char is None:
+                if not visible:
+                    if map[x][y].explored:
+                        if wall:
+                            libtcod.console_set_char_background(con, x, y, color_dark_wall, libtcod.BKGND_SET)
+                        else:
+                            libtcod.console_set_char_background(con, x, y, color_dark_ground, libtcod.BKGND_SET)
                 else:
-                    libtcod.console_set_char_background(con, x, y, color_light_ground, libtcod.BKGND_SET)
-                map[x][y].explored = True
+                    #visible things
+                    if wall:
+                        libtcod.console_set_char_background(con, x, y, color_light_wall, libtcod.BKGND_SET)
+                    else:
+                        libtcod.console_set_char_background(con, x, y, color_light_ground, libtcod.BKGND_SET)
+                    map[x][y].explored = True
+            else:
+                #Draw special characters according to Tile.char
+                libtcod.console_put_char_ex(con, x, y, map[x][y].char, libtcod.white, libtcod.dark_blue)
     for object in objects:
         if object != player:
             object.draw()
