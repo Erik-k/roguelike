@@ -1,5 +1,5 @@
-# See if removing the "self.owner = self" junk from the classes makes any difference.
-# Do instances still have proper owners even if I dont explicitly assign them?
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
 
 import libtcodpy as libtcod
 import math
@@ -51,10 +51,9 @@ TORCH_RADIUS = 10
 fov_recompute = True # boolean for letting us know when to recompute the map fov
 
 # The map
-color_dark_wall = libtcod.Color(94, 38, 18)
-color_light_wall = libtcod.Color(135, 71, 6)
-color_dark_ground = libtcod.Color(128,10,10)
-color_light_ground = libtcod.Color(191,123,0)
+color_wall = libtcod.dark_red
+color_ground = libtcod.flame
+color_building = libtcod.darker_red
 
 #============================================================= 
 # Implement a switch-case construction, from this website: http://code.activestate.com/recipes/410692/
@@ -452,7 +451,16 @@ class ConfusedMonster:
             self.num_turns -= 1
         else:
             self.owner.ai = self.old_ai
-            message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)            
+            message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)      
+
+class BasicExplorer:
+    """
+    AI which chooses a random point on the map and travels there. This AI tries to explore the whole map, 
+    seeking out unexplored areas.
+    """      
+    def take_turn(self):
+        explorer = self.owner
+        
             
 def player_death(player):
     """Turn the player into a corpse and declare game over."""
@@ -484,12 +492,13 @@ class Tile:
     A tile in the map and its properties.
     Make sure that if char, fore, or back are changed to non-default, that they are ALL changed.
     """
-    def __init__(self, blocked, block_sight=True, char=None, fore=None, back=None):
+    def __init__(self, blocked, block_sight=True, char=' ', fore=libtcod.white, back=libtcod.black):
         self.blocked = blocked #is it passable?
         self.block_sight = block_sight
         self.char = char #for special characters like building components
         self.fore = fore #special foreground color
         self.back = back #special background color
+        self.mapedge = False
         self.explored = False
 
 class Rect:
@@ -550,19 +559,28 @@ def create_building(building):
         for y in range(building.y1, building.y2):
             map[x][y].blocked = False
             map[x][y].block_sight = False
+            map[x][y].fore = color_ground
+            map[x][y].back = color_ground
 
     #Create walls of building 
-    for x in range(building.x1, building.x2):
+    for x in range(building.x1, building.x2+1):
         map[x][building.y1].blocked = True
         map[x][building.y1].block_sight = True
+        map[x][building.y1].fore = color_building
+        map[x][building.y1].back = color_building
         map[x][building.y2].blocked = True
         map[x][building.y2].block_sight = True
-    for y in range(building.y1, building.y2):
+        map[x][building.y2].fore = color_building
+        map[x][building.y2].back = color_building
+    for y in range(building.y1, building.y2+1):
         map[building.x1][y].blocked = True
         map[building.x1][y].block_sight = True
+        map[building.x1][y].fore = color_building
+        map[building.x1][y].back = color_building
         map[building.x2][y].blocked = True
         map[building.x2][y].block_sight = True
-
+        map[building.x2][y].fore = color_building
+        map[building.x2][y].back = color_building
 
 def create_h_tunnel(x1, x2, y):
     global map
@@ -587,18 +605,32 @@ def make_surface_map():
     noise2d = libtcod.noise_new(2) #create a 2D noise generator
     libtcod.noise_set_type(noise2d, libtcod.NOISE_SIMPLEX) #tell it to use simplex noise for higher contrast
 
-    map = [[ Tile(blocked=False, block_sight=False) for y in range(MAP_HEIGHT)] for x in range(MAP_WIDTH) ]
+    map = [[ Tile(blocked=False, block_sight=False, char=' ', fore=color_ground, back=color_ground) 
+        for y in range(MAP_HEIGHT)] 
+            for x in range(MAP_WIDTH) ]
     #Put a border around the map so the characters can't go off the edge of the world
     for x in range(0, MAP_WIDTH):
         map[x][0].blocked = True
         map[x][0].block_sight = True
+        map[x][0].mapedge = True
+        map[x][0].fore = color_wall
+        map[x][0].back = color_wall
         map[x][MAP_HEIGHT-1].blocked = True
         map[x][MAP_HEIGHT-1].block_sight = True
+        map[x][MAP_HEIGHT-1].mapedge = True
+        map[x][MAP_HEIGHT-1].fore = color_wall
+        map[x][MAP_HEIGHT-1].back = color_wall
     for y in range(0, MAP_HEIGHT):
         map[0][y].blocked = True
         map[0][y].block_sight = True
+        map[0][y].mapedge = True
+        map[0][y].fore = color_wall
+        map[0][y].back = color_wall
         map[MAP_WIDTH-1][y].blocked = True
         map[MAP_WIDTH-1][y].block_sight = True
+        map[MAP_WIDTH-1][y].mapedge = True
+        map[MAP_WIDTH-1][y].fore = color_wall
+        map[MAP_WIDTH-1][y].back = color_wall
 
     # Create natural looking landscape
     for x in range(1, MAP_WIDTH-1):
@@ -607,6 +639,8 @@ def make_surface_map():
                 #Turbulent simplex noise returns values between 0.0 and 1.0, with many values greater than 0.9.
                 map[x][y].blocked = True
                 map[x][y].block_sight = True
+                map[x][y].fore = color_wall
+                map[x][y].back = color_wall
 
     buildings = []
     num_buildings = 0
@@ -620,11 +654,34 @@ def make_surface_map():
         buildings.append(new_building)
         num_buildings += 1
 
-    #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
+    # #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
+    # door_chances = { 'left': 25, 'right': 25, 'top': 25, 'bottom': 25 }
     for place in buildings:
+    #     num_doors = libtcod.random_get_int(0, 2, 4)
+    #         for case in switch(num_doors):
+    #             if case(2): 
+    #                 choice = random_choice(door_chances)
         doorx, doory = place.middle_of_wall('left')
-        if map[doorx][doory].blocked: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = '#'
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+            map[doorx][doory].char = '#' 
+            map[doorx][doory].blocked = False 
+            map[doorx][doory].fore = libtcod.white
+            map[doorx][doory].back = libtcod.grey
+        doorx, doory = place.middle_of_wall('top')
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+            map[doorx][doory].char = '#' 
+            map[doorx][doory].blocked = False 
+            map[doorx][doory].fore = libtcod.white
+            map[doorx][doory].back = libtcod.grey
+        doorx, doory = place.middle_of_wall('right')
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+            map[doorx][doory].char = '#' 
+            map[doorx][doory].blocked = False 
+            map[doorx][doory].fore = libtcod.white
+            map[doorx][doory].back = libtcod.grey
+        doorx, doory = place.middle_of_wall('bottom')
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+            map[doorx][doory].char = '#' 
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
@@ -940,9 +997,7 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
         
 def render_all():
     """Draw everything on to the screen. This is where all the consoles get blit'd."""
-    global fov_map, color_dark_wall, color_light_wall
-    global color_dark_ground, color_light_ground
-    global fov_recompute
+    global fov_map, fov_recompute
     global dungeon_level
 
     if fov_recompute:
@@ -958,23 +1013,15 @@ def render_all():
                 if map[x][y].explored:
                     # Draw things outside of vision which are remembered
                     if wall:
-                        libtcod.console_set_char_background(con, x, y, color_dark_wall, libtcod.BKGND_SET)
+                        libtcod.console_put_char_ex(con, x, y, map[x][y].char, 
+                            libtcod.light_gray * map[x][y].fore, libtcod.light_gray * map[x][y].back)
                     else:
-                        libtcod.console_set_char_background(con, x, y, color_dark_ground, libtcod.BKGND_SET)
+                        libtcod.console_put_char_ex(con, x, y, map[x][y].char, 
+                            libtcod.dark_grey * map[x][y].fore, libtcod.dark_grey * map[x][y].back)
             else:
-                # Currently visible things
-                if map[x][y].char is None and map[x][y].fore is None and map[x][y].back is None:
-                # We are using the default
-                    if wall:
-                        libtcod.console_set_char_background(con, x, y, color_light_wall, libtcod.BKGND_SET)
-                    else:
-                        libtcod.console_set_char_background(con, x, y, color_light_ground, libtcod.BKGND_SET)
-                    map[x][y].explored = True
-                elif map[x][y].char is not None and map[x][y].fore is not None and map[x][y] is not None:
-                    #Draw special characters according to Tile.char, Tile.fore, Tile.back
-                    libtcod.console_put_char_ex(con, x, y, map[x][y].char, map[x][y].fore, map[x][y].back)
-                else:
-                    print 'ERROR: Bad tile property. Make sure tile.char, tile.fore, and tile.back are all defined.'
+            # Currently visible things
+                libtcod.console_put_char_ex(con, x, y, map[x][y].char, map[x][y].fore, map[x][y].back)
+                map[x][y].explored = True
     for object in objects:
         if object != player:
             object.draw()
@@ -1114,7 +1161,8 @@ def handle_keys():
             if key_char == 'h':
                 #show help screen
                 msgbox('The available keys are:\nKeypad: movement\ng: get an item\ni: show the inventory\n' +
-                    'd: drop an item\n>: Take down stairs\nc: Show character information.', CHARACTER_SCREEN_WIDTH)
+                    'd: drop an item\n>: Take down stairs\nc: Show character information\n\nDebugging:\n' +
+                    'm: reveal map\np: print player coordinates', CHARACTER_SCREEN_WIDTH)
 
             if key_char == 'm':
                 #Debugging - display whole map
@@ -1151,7 +1199,7 @@ def new_game():
     #create the list of game messages and their colors.
     game_msgs = []    
 
-    message('Welcome Player One! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.', libtcod.red)
+    message('Welcome to Mars! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.', libtcod.red)
 
 def initialize_fov():
     """This is needed to allow field of view stuff."""
@@ -1326,7 +1374,8 @@ main_menu()
 # * Set it outside on Martian soil- red colors, day/night cycle. Enlarge the play area. Buildings should
 #   be placed by the map after terrain is created, as white squares which are free to interrupt the terrain.
 # * Choose a really neat main menu image- something like Gagarin Deep Space.
-# 
+# * Try to use a hardware renderer, like OpenGL, rather than the software one. Do a simple system check to see
+#   if the hardware renderers are supported. Libtcod has stuff to do that check.
 # 
 # * Scientists, laborers, engineers, with specializations:
 #   Botanist (farmer), Engineer (builder), Laborer (?? operators?). Use the object component method described in 
