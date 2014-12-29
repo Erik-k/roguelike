@@ -1,6 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
+#============================================================= 
+# To use special characters from ASCII Code Page 437 (the terminal 16x16 tileset) pass the decimal value 
+# for each of these characters to console_put_char_ex as char.
+# https://en.wikipedia.org/wiki/Code_page_437
+#============================================================= 
+
 import libtcodpy as libtcod
 import math
 import textwrap
@@ -43,6 +49,9 @@ LEVEL_UP_BASE = 200
 LEVEL_UP_FACTOR = 150
 
 LIMIT_FPS = 20  #20 frames-per-second maximum
+PLAYER_SPEED = 2
+DEFAULT_SPEED = 8
+DEFAULT_ATTACK_SPEED = 20
 
 # FOV algorithm
 FOV_ALGO = 1 # 0 is default FOV algorithm in libtcod.map_compute_fov
@@ -87,7 +96,7 @@ class switch(object):
 class GamePiece:
     """Anything which can be drawn. Players, NPCs, items, stairs, etc."""
     def __init__(self, x, y, char, name, color, blocks=False, always_visible=False, 
-                fighter=None, ai=None, item=None, equipment=None):
+                fighter=None, ai=None, item=None, equipment=None, speed=DEFAULT_SPEED):
         self.x = x
         self.y = y
         self.char = char
@@ -116,13 +125,27 @@ class GamePiece:
             self.item = Item() # create an Item?
             self.item.owner = self
 
+        self.speed = speed
+        self.wait = 0
+
+        # For creatures with names
+        self.scifi_name = None
+        self.spoken = False
+
     def move(self, dx, dy):
         """Move to a coordinate if it isn't blocked."""
         if not is_blocked(self.x + dx, self.y + dy):
             self.x += dx
             self.y += dy
+
+        # Whenever the thing moves, it has to wait:
+        self.wait = self.speed
             
     def move_towards(self, target_x, target_y):
+        """
+        Move towards a target_x, target_y coordinate. This method computes the A* path and uses GamePiece.move()
+        to actually implement the movement.
+        """
         initialize_pathmap()
         libtcod.path_compute(path, self.x, self.y, target_x, target_y)
         pathx, pathy = libtcod.path_walk(path, True)
@@ -167,13 +190,14 @@ class GamePiece:
         
 class Fighter:
     """Combat related properties and methods (monster, player, NPC)."""
-    def __init__(self, hp, defense, power, xp, death_function=None):
+    def __init__(self, hp, defense, power, xp, death_function=None, attack_speed=DEFAULT_ATTACK_SPEED):
         self.base_max_hp = hp
         self.hp = hp
         self.base_defense = defense
         self.base_power = power
         self.xp = xp
         self.death_function = death_function
+        self.attack_speed = attack_speed
         
     # @property means it is a read-only getter of the class
     # https://docs.python.org/2/library/functions.html#property
@@ -215,6 +239,9 @@ class Fighter:
             target.fighter.take_damage(damage)
         else:
             message(self.owner.name.capitalize() + ' attacks ' + target.name + ' but it has no effect!', libtcod.yellow)
+
+        # Wait according to its speed
+        self.owner.wait = self.attack_speed
             
     def heal(self, amount):
         self.hp += amount
@@ -438,6 +465,10 @@ class BasicMonster:
             # if close enough, attack!
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
+                if not self.owner.spoken: 
+                    message('My name is ' + self.owner.scifi_name +' and I am programmed to destroy!', libtcod.magenta)
+                    self.owner.spoken = True
+
             
 class ConfusedMonster:
     """AI for a confused monster. Must take previous AI as argument so it can revert to it after a while."""
@@ -453,14 +484,53 @@ class ConfusedMonster:
             self.owner.ai = self.old_ai
             message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)      
 
+def choose_random_unblocked_spot():
+    """
+    This function picks a random point on the map which is not blocked. It returns the x, y coordinates for
+    that location.
+    """
+    candidates = []
+    for x in range(1, MAP_WIDTH):
+            for y in range(1, MAP_HEIGHT):
+                if not map[x][y].blocked:
+                    candidates.append((x, y))
+    rand_index = libtcod.random_get_int(0, 0, len(candidates)-1)
+    return candidates[rand_index]
+
 class BasicExplorer:
     """
     AI which chooses a random point on the map and travels there. This AI tries to explore the whole map, 
     seeking out unexplored areas.
     """      
+    def __init__(self):
+        """Allocate a pathfinding algorithm using a new map belonging to this object."""
+
+        #Create the path map
+        self.path_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
+        for x in range(1, MAP_WIDTH):
+            for y in range(1, MAP_HEIGHT):
+                libtcod.map_set_properties(self.path_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
+
+    def create_path(self):
+        # now use the path map to create the path from the explorer's current position to another spot:
+        self.path = libtcod.path_new_using_map(self.path_map)
+        random_destination_x, random_destination_y = choose_random_unblocked_spot()
+        libtcod.path_compute(self.path, self.owner.x, self.owner.y, random_destination_x, random_destination_y)
+
+        originx, originy = libtcod.path_get_origin(self.path)
+        destx, desty = libtcod.path_get_destination(self.path)
+        print 'Created a new path with origin (' + str(originx)+', '+str(originy)+') and dest ('+str(destx)+', '+str(desty)+').'
+
     def take_turn(self):
-        explorer = self.owner
-        
+        if not libtcod.path_is_empty(self.path):
+            pathx, pathy = libtcod.path_walk(self.path, True)
+            print 'Explorer is trying to move from (' + str(self.owner.x) + ', ' + str(self.owner.y) + ') to (' + str(pathx) + ', ' + str(pathy) +').'
+            self.owner.move(pathx, pathy)
+        # else:
+        #     print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
+        #     self.create_path()
+
+
             
 def player_death(player):
     """Turn the player into a corpse and declare game over."""
@@ -482,7 +552,19 @@ def monster_death(monster):
     monster.name = 'remains of ' + monster.name
     monster.send_to_back()
     
-    
+def namegenerator():
+    """Create a random male or female demon name and return it as a string."""
+    try:
+        libtcod.namegen_parse('libtcod-1.5.1/data/namegen/mingos_demon.cfg')
+        if libtcod.random_get_int(0, 0, 1):
+            new_name = libtcod.namegen_generate('demon male')
+        else:
+            new_name = libtcod.namegen_generate('demon female')
+        return new_name
+    except:
+        print 'Cannot find name generator file. Is it in ./libtcod-1.5.1/data/namegen/mingos_demon.cfg ?'
+
+
 #==============================================================================
 # Level and map creation  
 #==============================================================================
@@ -654,6 +736,13 @@ def make_surface_map():
         buildings.append(new_building)
         num_buildings += 1
 
+        #Create stairs in the last building
+        if num_buildings == MAX_BUILDINGS:
+            new_x, new_y = new_building.center()
+            stairs = GamePiece(new_x, new_y, '>', 'stairs',  libtcod.white, always_visible=True)
+            objects.append(stairs)
+            stairs.send_to_back() #so that it gets drawn below monsters
+
     # #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
     # door_chances = { 'left': 25, 'right': 25, 'top': 25, 'bottom': 25 }
     for place in buildings:
@@ -663,36 +752,33 @@ def make_surface_map():
     #                 choice = random_choice(door_chances)
         doorx, doory = place.middle_of_wall('left')
         if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = '#' 
+            map[doorx][doory].char = 206
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('top')
         if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = '#' 
+            map[doorx][doory].char = 23
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('right')
         if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = '#' 
+            map[doorx][doory].char = 29
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('bottom')
         if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = '#' 
+            map[doorx][doory].char = 18
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
 
-    #Make a spot for the player to start
-    startingx = int(MAP_WIDTH/2)
-    startingy = int(MAP_HEIGHT/2)
-    map[startingx][startingy].blocked=False
-    map[startingx][startingy].block_sight=False
-    player.x = startingx
-    player.y = startingy
+        place_objects(place) #add some contents to this room
+
+    # Choose a spot for the player to start
+    player.x, player.y = choose_random_unblocked_spot()
 
 
 def make_underground_map():
@@ -763,7 +849,7 @@ def next_level():
 
     message('You descend deeper into the dungeon...', libtcod.red)
     dungeon_level += 1
-    make_underground_map() # a fresh level!
+    make_surface_map() # a fresh level!
     initialize_fov()
     
 def random_choice_index(chances):
@@ -816,6 +902,7 @@ def place_objects(room):
     monster_chances = {} # so that we can build the dict below
     monster_chances['robot'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
     monster_chances['security bot'] = from_dungeon_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
+    monster_chances['explorer'] = 80
 
     #maximum number of items per room
     max_items = from_dungeon_level( [ [1, 1], [2, 4] ] )
@@ -846,12 +933,22 @@ def place_objects(room):
                 ai_component = BasicMonster()
                 monster = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
-            else:
+                monster.scifi_name = namegenerator()
+            elif choice == 'security bot':
                 #Create a major enemy
                 fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=monster_death)
                 ai_component = BasicMonster()
                 monster = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
+                monster.scifi_name = namegenerator()
+
+            else:
+                fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
+                ai_component = BasicExplorer()
+                monster = GamePiece(x, y, '@', 'explorer', libtcod.green, blocks=True,
+                    fighter=fighter_component, ai=ai_component)
+                monster.ai.create_path()
+
             
             objects.append(monster)
             
@@ -1105,6 +1202,11 @@ def handle_keys():
 
     #movement keys
     if game_state == 'playing':
+
+        if player.wait > 0: # don't take a turn yet if still waiting
+            player.wait -= 1
+            return
+
         if key.vk == libtcod.KEY_UP or key.vk == libtcod.KEY_KP8:
             player_move_or_attack(0, -1)
         elif key.vk == libtcod.KEY_DOWN or key.vk == libtcod.KEY_KP2:
@@ -1185,7 +1287,7 @@ def new_game():
     
     #Creating the object representing the player:
     fighter_component = Fighter(hp=30, defense=2, power=5, xp=0, death_function=player_death) #creating the fighter aspect of the player
-    player = GamePiece(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component)
+    player = GamePiece(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component, speed=PLAYER_SPEED)
     player.level = 1
     dungeon_level = 1
 
@@ -1249,10 +1351,13 @@ def play_game():
             break
         
         #let monsters take their turn
-        if game_state == 'playing' and player_action != 'didnt_take_turn': #let monsters take their turn
+        if game_state == 'playing': #and player_action != 'didnt_take_turn': #let monsters take their turn
             for object in objects:
                 if object.ai:
-                    object.ai.take_turn()
+                    if object.wait > 0: # don't take a turn yet if still waiting
+                        object.wait -= 1
+                    else:
+                        object.ai.take_turn()
                     
 def msgbox(text, width=50):
     """
@@ -1376,7 +1481,9 @@ main_menu()
 # * Choose a really neat main menu image- something like Gagarin Deep Space.
 # * Try to use a hardware renderer, like OpenGL, rather than the software one. Do a simple system check to see
 #   if the hardware renderers are supported. Libtcod has stuff to do that check.
-# 
+# * Make sure that name generation is not continuosly opening the name.cfg file, but rather just opening it once
+#   on startup and keeping it in memory after that. 
+# * Rename "monster" to "NPC"
 # * Scientists, laborers, engineers, with specializations:
 #   Botanist (farmer), Engineer (builder), Laborer (?? operators?). Use the object component method described in 
 #   tutorial 6.
