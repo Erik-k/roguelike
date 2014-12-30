@@ -525,8 +525,15 @@ class BasicExplorer:
         if not libtcod.path_is_empty(self.path):
             pathx, pathy = libtcod.path_walk(self.path, True)
             print 'Explorer is trying to move from (' + str(self.owner.x) + ', ' + str(self.owner.y) + ') to (' + str(pathx) + ', ' + str(pathy) +').'
-            self.owner.move(pathx, pathy)
-        # else:
+            dx = pathx - self.owner.x
+            dy = pathy - self.owner.y
+            distance = math.sqrt(dx ** 2 + dy ** 2)
+     
+            #normalize it to length 1 (preserving direction), then round it and
+            #convert to integer so the movement is restricted to the map grid
+            dx = int(round(dx / distance))
+            dy = int(round(dy / distance))
+            self.owner.move(dx, dy)        # else:
         #     print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
         #     self.create_path()
 
