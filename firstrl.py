@@ -3,7 +3,7 @@
 
 #============================================================= 
 # To use special characters from ASCII Code Page 437 (the terminal 16x16 tileset) pass the decimal value 
-# for each of these characters to console_put_char_ex as char.
+# for each of these characters to libtcod.console_put_char_ex as char.
 # https://en.wikipedia.org/wiki/Code_page_437
 #============================================================= 
 
@@ -12,6 +12,7 @@ import math
 import textwrap
 import shelve
 from time import sleep
+from random import choice
 
 #actual size of the window
 SCREEN_WIDTH = 80
@@ -501,6 +502,10 @@ class BasicExplorer:
     """
     AI which chooses a random point on the map and travels there. This AI tries to explore the whole map, 
     seeking out unexplored areas.
+    Current bugs: if I cast confuse on an explorer, after they finish being confused they then stumble around
+    inside the room where I confused them and constantly create new paths to points on the map and immediately
+    complete them, without moving. Occaisionally it would walk a few steps in the room before generating and
+    erroneously finishing hundreds of paths.
     """      
     def __init__(self):
         """Allocate a pathfinding algorithm using a new map belonging to this object."""
@@ -533,9 +538,10 @@ class BasicExplorer:
             #convert to integer so the movement is restricted to the map grid
             dx = int(round(dx / distance))
             dy = int(round(dy / distance))
-            self.owner.move(dx, dy)        # else:
-        #     print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
-        #     self.create_path()
+            self.owner.move(dx, dy)        
+        else:
+            print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
+            self.create_path()
 
 
             
@@ -581,12 +587,13 @@ class Tile:
     A tile in the map and its properties.
     Make sure that if char, fore, or back are changed to non-default, that they are ALL changed.
     """
-    def __init__(self, blocked, block_sight=True, char=' ', fore=libtcod.white, back=libtcod.black):
+    def __init__(self, blocked, block_sight=True, char=' ', fore=libtcod.white, back=libtcod.black, outdoors=True):
         self.blocked = blocked #is it passable?
         self.block_sight = block_sight
-        self.char = char #for special characters like building components
-        self.fore = fore #special foreground color
-        self.back = back #special background color
+        self.char = char 
+        self.fore = fore #foreground color
+        self.back = back #background color
+        self.outdoors = outdoors
         self.mapedge = False
         self.explored = False
 
@@ -641,15 +648,20 @@ def create_room(room):
             map[x][y].block_sight = False
 
 def create_building(building):
-    """Very similar to create_room but puts a border around it."""
+    """Very similar to create_room but puts a border around it.
+    Currently it makes a double pass over some of the tiles, first assigning them to be
+    cleared and then putting a wall there (un-clearing them). That could probably be cleaned up.
+    """
     global map
 
-    for x in range(building.x1, building.x2):
-        for y in range(building.y1, building.y2):
+    # Clear the whole footprint
+    for x in range(building.x1, building.x2+1):
+        for y in range(building.y1, building.y2+1):
             map[x][y].blocked = False
             map[x][y].block_sight = False
             map[x][y].fore = color_ground
             map[x][y].back = color_ground
+            map[x][y].outdoors = False
 
     #Create walls of building 
     for x in range(building.x1, building.x2+1):
@@ -899,6 +911,38 @@ def from_dungeon_level(table):
         if dungeon_level >= level:
             return value
     return 0  #default is zero
+
+def place_junk():
+    """
+    Puts boulders, rocks, junk and/or plants around the map. Eventually I want it to accept a map as an 
+    argument and depending on the type of map, (outdoors vs indoors, surface vs cavern, etc) place
+    different debris. For example, indoors would have equipment and trash rather than rocks and plants.
+    """
+    # Ideally I can eventually get rid of this global statement and just accept a map object when we 
+    # get to the point where there are many different maps stored (to allow returning to previous areas).
+    global map
+
+    debris = {}
+    debris['nothing'] = 100
+    debris['pebble'] = 10
+    debris['stone'] = 10
+    debris['gravel'] = 10
+
+    for y in range(MAP_HEIGHT): 
+            for x in range(MAP_WIDTH):
+                if map[x][y].outdoors and not map[x][y].blocked:
+                    choice = random_choice(debris)
+                    if choice == 'nothing':
+                        pass
+                    elif choice == 'pebble':
+                        map[x][y].char = '.'
+                        map[x][y].fore = libtcod.darkest_sepia
+                    elif choice == 'stone':
+                        map[x][y].char = 7 # bullet point
+                        map[x][y].fore = libtcod.darkest_sepia
+                    else: # gravel
+                        map[x][y].char = 176
+                        map[x][y].fore = libtcod.darkest_red
 
 def place_objects(room):
     """Puts stuff all over the map AFTER the map has been created."""
