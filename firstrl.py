@@ -706,9 +706,11 @@ def make_surface_map():
     noise2d = libtcod.noise_new(2) #create a 2D noise generator
     libtcod.noise_set_type(noise2d, libtcod.NOISE_SIMPLEX) #tell it to use simplex noise for higher contrast
 
+    # Create the map with a default tile choice of empty unblocked squares.
     map = [[ Tile(blocked=False, block_sight=False, char=' ', fore=color_ground, back=color_ground) 
         for y in range(MAP_HEIGHT)] 
             for x in range(MAP_WIDTH) ]
+
     #Put a border around the map so the characters can't go off the edge of the world
     for x in range(0, MAP_WIDTH):
         map[x][0].blocked = True
@@ -743,6 +745,7 @@ def make_surface_map():
                 map[x][y].fore = color_wall
                 map[x][y].back = color_wall
 
+    # Place buildings
     buildings = []
     num_buildings = 0
     for r in range(MAX_BUILDINGS):
@@ -771,13 +774,13 @@ def make_surface_map():
     #                 choice = random_choice(door_chances)
         doorx, doory = place.middle_of_wall('left')
         if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = 206
+            map[doorx][doory].char = 29
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('top')
         if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
-            map[doorx][doory].char = 23
+            map[doorx][doory].char = 18
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
@@ -795,6 +798,9 @@ def make_surface_map():
             map[doorx][doory].back = libtcod.grey
 
         place_objects(place) #add some contents to this room
+
+    # Scatter debris around the map to add flavor:
+    place_junk()
 
     # Choose a spot for the player to start
     player.x, player.y = choose_random_unblocked_spot()
@@ -936,13 +942,14 @@ def place_junk():
                         pass
                     elif choice == 'pebble':
                         map[x][y].char = '.'
-                        map[x][y].fore = libtcod.darkest_sepia
+                        map[x][y].fore = libtcod.dark_sepia
                     elif choice == 'stone':
                         map[x][y].char = 7 # bullet point
-                        map[x][y].fore = libtcod.darkest_sepia
+                        map[x][y].fore = libtcod.dark_sepia
                     else: # gravel
                         map[x][y].char = 176
-                        map[x][y].fore = libtcod.darkest_red
+                        map[x][y].fore = libtcod.dark_red
+
 
 def place_objects(room):
     """Puts stuff all over the map AFTER the map has been created."""
@@ -1023,10 +1030,10 @@ def place_objects(room):
                 item = GamePiece(x, y, '*', 'fireball scroll', libtcod.orange, always_visible=True, item=item_component)
             elif choice == 'sword':
                 equipment_component = Equipment(slot='right hand', power_bonus=3)
-                item = GamePiece(x, y, '/', 'sword', libtcod.sky, equipment=equipment_component)
+                item = GamePiece(x, y, '/', 'sword', libtcod.sky, equipment=equipment_component, always_visible=True,)
             elif choice == 'shield':
                 equipment_component = Equipment(slot='left hand', defense_bonus=1, max_hp_bonus=10)
-                item = GamePiece(x, y, '0', 'shield', libtcod.brass, equipment=equipment_component)
+                item = GamePiece(x, y, '0', 'shield', libtcod.brass, equipment=equipment_component, always_visible=True,)
             else: 
                 item_component = Item(use_function=cast_confuse)
                 item = GamePiece(x, y, '#', 'scroll of confusion', libtcod.light_yellow, always_visible=True, item=item_component)
@@ -1229,12 +1236,27 @@ def player_move_or_attack(dx, dy):
         fov_recompute = True
 
 def get_names_under_mouse():
-    global mouse
+    global mouse, map
     
     #return a string with the names of all objects under the mouse
     (x, y) = (mouse.cx, mouse.cy)    
     #create a list with the names of all objects under the mouse AND in FOV 
     names = [obj.name for obj in objects if obj.x == x and obj.y == y and libtcod.map_is_in_fov(fov_map, obj.x, obj.y)]
+    
+    # If there is junk placed, explain what it is
+    if map[x][y].char is not ' ':
+        for case in switch(map[x][y].char):
+            if case('.'): 
+                names.append('a pebble')
+                break
+            if case(7): 
+                names.append('a stone')
+                break
+            if case(176): 
+                names.append('gravel')
+                break
+            if case(): break
+
     names = ', '.join(names) #concatenates the names into a big string, separated by a comma
     return names.capitalize() 
     
