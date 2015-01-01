@@ -585,7 +585,7 @@ def namegenerator():
 class Tile:
     """
     A tile in the map and its properties.
-    Make sure that if char, fore, or back are changed to non-default, that they are ALL changed.
+    A map is a 2D array of Tiles.
     """
     def __init__(self, blocked, block_sight=True, char=' ', fore=libtcod.white, back=libtcod.black, outdoors=True):
         self.blocked = blocked #is it passable?
@@ -695,12 +695,12 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].blocked = False
         map[x][y].block_sight = False
 
-def make_surface_map():
+def make_surface_map(map_number):
     """
     Creates a map which is open by default, and then filled with boulders, mesas and buildings.
     Uses a 2D noise generator. The map has an impenetrable border.
     """
-    global map, objects, stairs
+    global list_of_maps, objects, stairs
     objects = [player]
 
     noise2d = libtcod.noise_new(2) #create a 2D noise generator
@@ -805,6 +805,11 @@ def make_surface_map():
     # Choose a spot for the player to start
     player.x, player.y = choose_random_unblocked_spot()
 
+    # Add this map to the grand list of maps:
+    list_of_maps.append(map)
+    map_number += 1
+    return map_number
+
 
 def make_underground_map():
     """Creates rectangular rooms and connects them with straight hallways. The default map is filled."""
@@ -867,13 +872,13 @@ def make_underground_map():
     stairs.send_to_back() #so that it gets drawn below monsters
 
 def next_level():
-    global dungeon_level
+    global map_number
 
     message('You rest for a moment and recover your strength.', libtcod.light_violet)
     player.fighter.heal(player.fighter.max_hp / 2)
 
     message('You descend deeper into the dungeon...', libtcod.red)
-    dungeon_level += 1
+    map_number += 1
     make_surface_map() # a fresh level!
     initialize_fov()
     
@@ -903,7 +908,7 @@ def random_choice(chances_dict):
 
     return strings[random_choice_index(chances)] # returns the key which corresponds to the chosen chance
 
-def from_dungeon_level(table):
+def from_map_number(table):
     """
     Returns a value that depends on level. The table must be a list of [value, level] pairs. For example, 
     a square progression of [x**2, x] would be:
@@ -914,7 +919,7 @@ def from_dungeon_level(table):
     TODO: Use sorting to enforce the assumption that the table is in ascending order.
     """
     for (value, level) in reversed(table):
-        if dungeon_level >= level:
+        if map_number >= level:
             return value
     return 0  #default is zero
 
@@ -954,23 +959,23 @@ def place_junk():
 def place_objects(room):
     """Puts stuff all over the map AFTER the map has been created."""
     # max number of monsters per room:
-    max_monsters = from_dungeon_level( [ [2, 1], [3, 4], [5, 6] ] )
+    max_monsters = from_map_number( [ [2, 1], [3, 4], [5, 6] ] )
 
     #chance of each monster
     monster_chances = {} # so that we can build the dict below
     monster_chances['robot'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
-    monster_chances['security bot'] = from_dungeon_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
+    monster_chances['security bot'] = from_map_number( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
     monster_chances['explorer'] = 80
 
     #maximum number of items per room
-    max_items = from_dungeon_level( [ [1, 1], [2, 4] ] )
+    max_items = from_map_number( [ [1, 1], [2, 4] ] )
 
     #chance of each item. By default they have a chance of 0 at level 1, which then increases.
     item_chances = {}
     item_chances['heal'] = 35 #heal pots always show up
-    item_chances['lightning'] = from_dungeon_level([[25, 4]])
-    item_chances['fireball'] =  from_dungeon_level([[25, 6]])
-    item_chances['confuse'] =   from_dungeon_level([[10, 2]])
+    item_chances['lightning'] = from_map_number([[25, 4]])
+    item_chances['fireball'] =  from_map_number([[25, 6]])
+    item_chances['confuse'] =   from_map_number([[10, 2]])
     item_chances['sword'] = 25
     item_chances['shield'] = 15
  
@@ -1153,7 +1158,7 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
 def render_all():
     """Draw everything on to the screen. This is where all the consoles get blit'd."""
     global fov_map, fov_recompute
-    global dungeon_level
+    global map_number
 
     if fov_recompute:
         fov_recompute = False
@@ -1200,7 +1205,7 @@ def render_all():
         libtcod.light_red, libtcod.darker_red)
     #display dungeon level
     libtcod.console_print_ex(panel, 1, 3, libtcod.BKGND_NONE, libtcod.LEFT, 'Dungeon level ' +
-         str(dungeon_level))
+         str(map_number))
     #display names of objects under the mouse
     libtcod.console_set_default_foreground(panel, libtcod.light_gray)
     libtcod.console_print_ex(panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse())
@@ -1356,16 +1361,17 @@ def handle_keys():
 #############################################
  
 def new_game():
-    global player, inventory, game_msgs, game_state, dungeon_level
+    global player, inventory, game_msgs, game_state, map_number, list_of_maps
     
     #Creating the object representing the player:
     fighter_component = Fighter(hp=30, defense=2, power=5, xp=0, death_function=player_death) #creating the fighter aspect of the player
     player = GamePiece(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component, speed=PLAYER_SPEED)
     player.level = 1
-    dungeon_level = 1
+    map_number = 0
+    list_of_maps = []
 
     #generate map, but at this point its not drawn to the screen    
-    make_surface_map()
+    map_number = make_surface_map(map_number)
     initialize_fov()
 
     game_state = 'playing'
@@ -1483,11 +1489,11 @@ def save_game():
     file['game_msgs'] = game_msgs
     file['game_state'] = game_state
     file['stairs_index'] = objects.index(stairs)
-    file['dungeon_level'] = dungeon_level
+    file['map_number'] = map_number
     file.close()
     
 def load_game():
-    global map, objects, player, inventory, game_msgs, game_state, stairs, dungeon_level
+    global map, objects, player, inventory, game_msgs, game_state, stairs, map_number
     
     file = shelve.open('savegame', 'r')
     map = file['map']
@@ -1497,7 +1503,7 @@ def load_game():
     game_msgs = file['game_msgs']
     game_state = file['game_state']
     stairs = objects[file['stairs_index']]
-    dungeon_level = file['dungeon_level']
+    map_number = file['map_number']
     file.close()
     
     # Now that the core variables of the game have been restored, we can initialize the FOV map based on the loaded tiles:
