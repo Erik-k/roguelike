@@ -529,7 +529,7 @@ class BasicExplorer:
     def take_turn(self):
         if not libtcod.path_is_empty(self.path):
             pathx, pathy = libtcod.path_walk(self.path, True)
-            print 'Explorer is trying to move from (' + str(self.owner.x) + ', ' + str(self.owner.y) + ') to (' + str(pathx) + ', ' + str(pathy) +').'
+            #print 'Explorer is trying to move from (' + str(self.owner.x) + ', ' + str(self.owner.y) + ') to (' + str(pathx) + ', ' + str(pathy) +').'
             dx = pathx - self.owner.x
             dy = pathy - self.owner.y
             distance = math.sqrt(dx ** 2 + dy ** 2)
@@ -540,7 +540,7 @@ class BasicExplorer:
             dy = int(round(dy / distance))
             self.owner.move(dx, dy)        
         else:
-            print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
+            #print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
             self.create_path()
 
 
@@ -553,6 +553,7 @@ def player_death(player):
     # transform player into a corpse:
     player.char = '%'
     player.color = libtcod.dark_red
+    player.name = 'remains of ' + player.name
     
 def monster_death(monster):
     """Transform into a corpse which doesn't block, can't move, and can't be attacked."""
@@ -765,7 +766,7 @@ def make_surface_map():
             objects.append(stairs)
             stairs.send_to_back() #so that it gets drawn below monsters
 
-    # #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
+    #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
     # door_chances = { 'left': 25, 'right': 25, 'top': 25, 'bottom': 25 }
     for place in buildings:
     #     num_doors = libtcod.random_get_int(0, 2, 4)
@@ -773,25 +774,25 @@ def make_surface_map():
     #             if case(2): 
     #                 choice = random_choice(door_chances)
         doorx, doory = place.middle_of_wall('left')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: 
             map[doorx][doory].char = 29
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('top')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge:
             map[doorx][doory].char = 18
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('right')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: 
             map[doorx][doory].char = 29
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
             map[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('bottom')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: # don't bother putting a door in the middle of an empty room
+        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: 
             map[doorx][doory].char = 18
             map[doorx][doory].blocked = False 
             map[doorx][doory].fore = libtcod.white
@@ -930,8 +931,8 @@ def place_junk():
 
     debris = {}
     debris['nothing'] = 100
-    debris['pebble'] = 10
     debris['stone'] = 10
+    debris['boulder'] = 10
     debris['gravel'] = 10
 
     for y in range(MAP_HEIGHT): 
@@ -940,15 +941,46 @@ def place_junk():
                     choice = random_choice(debris)
                     if choice == 'nothing':
                         pass
-                    elif choice == 'pebble':
+                    elif choice == 'stone':
                         map[x][y].char = '.'
                         map[x][y].fore = libtcod.dark_sepia
-                    elif choice == 'stone':
+                    elif choice == 'boulder':
                         map[x][y].char = 7 # bullet point
                         map[x][y].fore = libtcod.dark_sepia
                     else: # gravel
                         map[x][y].char = 176
                         map[x][y].fore = libtcod.dark_red
+
+def draw_things():
+    """
+    This lets the player place things using the mouse by clicking on a tile and drawing over multiple
+    tiles. Unforunately it looks like libtcod 1.5.1 has a bug where getting the (dcx, dcy) values from
+    a mouse drag doesn't work. Or at least I cannot figure out how to get a good list of (dcx, dcy) 
+    coordinates from a mouse drag event.
+    """
+    
+    global key, mouse
+
+    while True:
+        # Rendering the screen first closes the menu and returns to the map, ready to place something
+        libtcod.console_flush()
+        libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)        
+        render_all()
+
+        xlist = []
+        ylist = []
+
+        if mouse.rbutton_pressed or key.vk == libtcod.KEY_ESCAPE:
+            return (None, None)  #cancel if the player right-clicked or pressed Escape
+
+        if mouse.lbutton:
+            while not mouse.lbutton_pressed:
+                (xlength, ylength) = (mouse.dcx, mouse.dcy)
+                xlist.append(xlength)
+                ylist.append(ylength)
+                print 'xlist and ylist are: ' + str(xlist) + ' ' + str(ylist)
+            # If the mouse button was pressed and dragged, return affected coordinates
+            return (xlist, ylist)
 
 
 def place_objects(room):
@@ -1041,6 +1073,53 @@ def place_objects(room):
             objects.append(item)
             item.send_to_back() #make items appear below other objects
 
+def build_menu(header):
+    """
+    Show a menu of things which can be built using the mouse.
+
+    TODO: Add a fish which can be placed in water, and has an appropriate AI module. If placed on land it
+    will turn to a skeleton (either the yen symbol or % like other corpses.)
+
+    Current bugs:
+    1) GamePiece objects don't get shaded properly when out of view
+    2) Stuff can be placed inside walls and can cause a crash if placed inside the level border and then
+        observed with the mouse
+    3) Menu debouncing issues - the damn thing is hard to keep open. And if I click through really
+        fast it can hang a bit.
+    """
+
+    global objects, map
+
+    options = [
+                'Plant a gene modified dwarf tree', 
+                'Place water',
+                'Place a beacon'
+    ]
+    
+    choice = menu(header, options, INVENTORY_WIDTH)
+    print 'Exited the build menu with choice ' + str(choice)
+    if choice is None: 
+        return None
+    if choice == 0:
+        (x, y) = target_tile()
+        # draw_things() returns the mouse.dcx, mouse.dcy values for the console cells that were dragged over
+        if x is not None and y is not None:
+            thing = GamePiece(x, y, 6, 'tree', libtcod.darker_green, blocks=False, always_visible=True)
+    elif choice == 1:
+        (x, y) = target_tile()
+        if x is not None and y is not None:
+            thing = GamePiece(x, y, 247, 'liquid water', libtcod.blue, blocks=True, always_visible=True)
+            map[x][y].back = libtcod.darker_blue
+    elif choice == 2:
+        (x, y) = target_tile()
+        if x is not None and y is not None:
+            thing = GamePiece(x, y, 143, 'a beacon', libtcod.brass * libtcod.dark_grey, blocks=False, always_visible=True)
+    
+    objects.append(thing)
+    thing.send_to_back()
+    libtcod.console_flush()
+    render_all()    
+
 #==============================================================================
 # Graphics       
 #==============================================================================
@@ -1131,7 +1210,7 @@ def inventory_menu(header):
     #if an item was chosen, return it
     if index is None or len(inventory) == 0: return None 
     return inventory[index].item
-            
+
 def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
     """Render a bar, such as a health or exp bar, with text in the middle."""
 
@@ -1173,6 +1252,10 @@ def render_all():
                     else:
                         libtcod.console_put_char_ex(con, x, y, map[x][y].char, 
                             libtcod.dark_grey * map[x][y].fore, libtcod.dark_grey * map[x][y].back)
+                        # TODO: Draw non-map things which are always visible, such as some objects.
+                        # Currently objects with always_visible=True do not get shaded darker when
+                        # outside of view. :-(
+
             else:
             # Currently visible things
                 libtcod.console_put_char_ex(con, x, y, map[x][y].char, map[x][y].fore, map[x][y].back)
@@ -1247,10 +1330,10 @@ def get_names_under_mouse():
     if map[x][y].char is not ' ':
         for case in switch(map[x][y].char):
             if case('.'): 
-                names.append('a pebble')
+                names.append('a stone')
                 break
             if case(7): 
-                names.append('a stone')
+                names.append('a boulder')
                 break
             if case(176): 
                 names.append('gravel')
@@ -1264,7 +1347,7 @@ def handle_keys():
     """Handles all keyboard input."""
     global fov_recompute
     global key
-    global map
+    global map, objects
 
     if key.vk == libtcod.KEY_ENTER and key.lalt:
         #Alt+Enter: toggle fullscreen
@@ -1335,9 +1418,17 @@ def handle_keys():
 
             if key_char == 'h':
                 #show help screen
-                msgbox('The available keys are:\nKeypad: movement\ng: get an item\ni: show the inventory\n' +
-                    'd: drop an item\n>: Take down stairs\nc: Show character information\n\nDebugging:\n' +
-                    'm: reveal map\np: print player coordinates', CHARACTER_SCREEN_WIDTH)
+                msgbox('The available keys are:\n' +
+                    'keypad: Movement\n' +
+                    'g: Get an item\n' +
+                    'i: Show the inventory\n' +
+                    'd: Drop an item\n' +
+                    '>: Take down stairs\n' + 
+                    'c: Show character information\n' + 
+                    'q: Build something in a tile\n' +
+                    '\nDebugging:\n' +
+                    'm: Reveal map\n' +
+                    'p: Print player coordinates', CHARACTER_SCREEN_WIDTH)
 
             if key_char == 'm':
                 #Debugging - display whole map
@@ -1348,6 +1439,10 @@ def handle_keys():
             if key_char == 'p':
                 #Debugging - give us the player's coordinates
                 print 'Player position is: (' + str(player.x) + ', ' + str(player.y) + ')'
+
+            if key_char == 'q':
+                # Display a menu from which the player can choose something to place on the map using the mouse.
+                build_menu('Choose something to place with the mouse:\n')
                     
             return 'didnt_take_turn'
          
