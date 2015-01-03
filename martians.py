@@ -94,7 +94,7 @@ class switch(object):
 # Drawable objects
 #============================================================= 
 
-class GamePiece:
+class GamePiece(object):
     """Anything which can be drawn. Players, NPCs, items, stairs, etc."""
     def __init__(self, x, y, char, name, color, blocks=False, always_visible=False, 
                 fighter=None, ai=None, item=None, equipment=None, speed=DEFAULT_SPEED):
@@ -133,16 +133,16 @@ class GamePiece:
         self.scifi_name = None
         self.spoken = False
 
-    def move(self, dx, dy):
+    def move(self, mymap, dx, dy):
         """Move to a coordinate if it isn't blocked."""
-        if not is_blocked(self.x + dx, self.y + dy):
+        if not is_blocked(mymap, self.x + dx, self.y + dy):
             self.x += dx
             self.y += dy
 
         # Whenever the thing moves, it has to wait:
         self.wait = self.speed
             
-    def move_towards(self, target_x, target_y):
+    def move_towards(self, mymap, target_x, target_y):
         """
         Move towards a target_x, target_y coordinate. This method computes the A* path and uses GamePiece.move()
         to actually implement the movement.
@@ -158,7 +158,7 @@ class GamePiece:
         #convert to integer so the movement is restricted to the map grid
         dx = int(round(dx / distance))
         dy = int(round(dy / distance))
-        self.move(dx, dy)
+        self.move(mymap, dx, dy)
         
     def distance_to(self, other):
         """Return the distance to another object from this object."""
@@ -170,9 +170,9 @@ class GamePiece:
         """Returns the distance between an object and a tile."""
         return math.sqrt( (x - self.x)**2 + (y - self.y)**2 )
         
-    def draw(self):
+    def draw(self, mymap):
         """Set the color and then draw the object at its position."""
-        if (libtcod.map_is_in_fov(fov_map, self.x, self.y) or (self.always_visible and map[self.x][self.y].explored)):
+        if (libtcod.map_is_in_fov(fov_map, self.x, self.y) or (self.always_visible and mymap[self.x][self.y].explored)):
             libtcod.console_set_default_foreground(con, self.color)
             libtcod.console_put_char(con, self.x, self.y, self.char, libtcod.BKGND_NONE)
         
@@ -189,7 +189,7 @@ class GamePiece:
         objects.remove(self)
         objects.insert(0, self)
         
-class Fighter:
+class Fighter(object):
     """Combat related properties and methods (monster, player, NPC)."""
     def __init__(self, hp, defense, power, xp, death_function=None, attack_speed=DEFAULT_ATTACK_SPEED):
         self.base_max_hp = hp
@@ -249,7 +249,7 @@ class Fighter:
         if self.hp > self.max_hp:
             self.hp = self.max_hp
 
-class Item:
+class Item(object):
     """Item class defines usage, picking up, and dropping of GamePieces."""
     def __init__(self, use_function=None):
         self.use_function = use_function
@@ -295,7 +295,7 @@ class Item:
         self.owner.y = player.y
         message('You dropped a ' + self.owner.name + '.', libtcod.yellow)
             
-class Equipment:
+class Equipment(object):
     """Anything which can be equipped on a character."""
     def __init__(self, slot, power_bonus=0, defense_bonus=0, max_hp_bonus=0):
         self.slot = slot #slots are defined with strings
@@ -454,15 +454,18 @@ def cast_fireball():
 #        elif self.state == 'running away': ...
 # This is preferable to swapping AI components like a state machine which can get overly complicated.
 
-class BasicMonster:
+class BasicMonster(object):
     """AI module for a basic monster."""
+    def __init__(self, mymap):
+        self.mymap = mymap
+
     def take_turn(self):
         #the monster takes its turn. If you can see it it can see you
         monster = self.owner
         if libtcod.map_is_in_fov(fov_map, monster.x, monster.y):
             # move towards player if far away
             if monster.distance_to(player) >= 2:
-                monster.move_towards(player.x, player.y)
+                monster.move_towards(self.mymap, player.x, player.y)
             # if close enough, attack!
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
@@ -471,7 +474,7 @@ class BasicMonster:
                     self.owner.spoken = True
 
             
-class ConfusedMonster:
+class ConfusedMonster(object):
     """AI for a confused monster. Must take previous AI as argument so it can revert to it after a while."""
     def __init__(self, old_ai, num_turns=CONFUSE_NUM_TURNS):
         self.old_ai = old_ai
@@ -485,7 +488,7 @@ class ConfusedMonster:
             self.owner.ai = self.old_ai
             message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)      
 
-def choose_random_unblocked_spot():
+def choose_random_unblocked_spot(mymap):
     """
     This function picks a random point on the map which is not blocked. It returns the x, y coordinates for
     that location.
@@ -493,12 +496,12 @@ def choose_random_unblocked_spot():
     candidates = []
     for x in range(1, MAP_WIDTH):
             for y in range(1, MAP_HEIGHT):
-                if not map[x][y].blocked:
+                if not mymap[x][y].blocked:
                     candidates.append((x, y))
     rand_index = libtcod.random_get_int(0, 0, len(candidates)-1)
     return candidates[rand_index]
 
-class BasicExplorer:
+class BasicExplorer(object):
     """
     AI which chooses a random point on the map and travels there. This AI tries to explore the whole map, 
     seeking out unexplored areas.
@@ -507,29 +510,33 @@ class BasicExplorer:
     complete them, without moving. Occaisionally it would walk a few steps in the room before generating and
     erroneously finishing hundreds of paths.
     """      
-    def __init__(self):
+    def __init__(self, mymap):
         """Allocate a pathfinding algorithm using a new map belonging to this object."""
+
+        self.mymap = mymap
 
         #Create the path map
         self.path_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
         for x in range(1, MAP_WIDTH):
             for y in range(1, MAP_HEIGHT):
-                libtcod.map_set_properties(self.path_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
+                libtcod.map_set_properties(self.path_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
 
     def create_path(self):
         # now use the path map to create the path from the explorer's current position to another spot:
         self.path = libtcod.path_new_using_map(self.path_map)
-        random_destination_x, random_destination_y = choose_random_unblocked_spot()
+        random_destination_x, random_destination_y = choose_random_unblocked_spot(self.mymap)
         libtcod.path_compute(self.path, self.owner.x, self.owner.y, random_destination_x, random_destination_y)
 
         originx, originy = libtcod.path_get_origin(self.path)
         destx, desty = libtcod.path_get_destination(self.path)
-        print 'Created a new path with origin (' + str(originx)+', '+str(originy)+') and dest ('+str(destx)+', '+str(desty)+').'
+        #print 'Created a new path with origin (' + str(originx)+', '+str(originy)+') and dest ('+str(destx)+
+            # ', '+str(desty)+').'
 
     def take_turn(self):
         if not libtcod.path_is_empty(self.path):
             pathx, pathy = libtcod.path_walk(self.path, True)
-            #print 'Explorer is trying to move from (' + str(self.owner.x) + ', ' + str(self.owner.y) + ') to (' + str(pathx) + ', ' + str(pathy) +').'
+            #print 'Explorer is trying to move from (' + str(self.owner.x) + ', ' + str(self.owner.y) + 
+                #') to (' + str(pathx) + ', ' + str(pathy) +').'
             dx = pathx - self.owner.x
             dy = pathy - self.owner.y
             distance = math.sqrt(dx ** 2 + dy ** 2)
@@ -538,7 +545,7 @@ class BasicExplorer:
             #convert to integer so the movement is restricted to the map grid
             dx = int(round(dx / distance))
             dy = int(round(dy / distance))
-            self.owner.move(dx, dy)        
+            self.owner.move(self.mymap, dx, dy)        
         else:
             #print 'The Explorer ' + self.owner.name + ' has finished their path. Choosing a new one...'
             self.create_path()
@@ -583,9 +590,25 @@ def namegenerator():
 # Level and map creation  
 #==============================================================================
 
-class Tile:
+class GameMap(object):
     """
-    A tile in the map and its properties.
+    Maps have qualities which apply to an entire play area. 
+    Maps have a unique id which is a sequential integer starting from 0, a location specifying 
+    whether the map is predominately on the surface or inside the planet. 
+    """
+    def __init__(self, id_number, level, location='surface'):
+        self.id_number = id_number
+        self.level = level # this is the actual map.
+        self.location = location
+        #self.first_map = False # this is needed (as True) to prevent creation of "up" stairs on first map
+
+    def __getitem__(self, index):
+        return self.level[index]
+
+class Tile(object):
+    """
+    A tile in the map and its properties. These are the properties that an individual square has, 
+    not to be confused with the properties that an entire game level might have.
     A map is a 2D array of Tiles.
     """
     def __init__(self, blocked, block_sight=True, char=' ', fore=libtcod.white, back=libtcod.black, outdoors=True):
@@ -598,7 +621,7 @@ class Tile:
         self.mapedge = False
         self.explored = False
 
-class Rect:
+class Rect(object):
     """A rectangle, with a center."""
     def __init__(self, x, y, w, h):
         self.x1 = x
@@ -627,10 +650,10 @@ class Rect:
             if case(): print 'Error: invalid side specified in Rect.middle_of_wall'
 
 #-------------------------------------------------------------
-def is_blocked(x,y):
+def is_blocked(mymap, x,y):
     """Is this square blocked by a map tile, or an object?"""
     #first see if the map tile itself is blocking
-    if map[x][y].blocked:
+    if mymap[x][y].blocked:
         return True
     #now check for any objects that are blocking
     for object in objects:
@@ -648,41 +671,40 @@ def create_room(room):
             map[x][y].blocked = False
             map[x][y].block_sight = False
 
-def create_building(building):
+def create_building(mymap, building):
     """Very similar to create_room but puts a border around it.
     Currently it makes a double pass over some of the tiles, first assigning them to be
     cleared and then putting a wall there (un-clearing them). That could probably be cleaned up.
     """
-    global map
 
     # Clear the whole footprint
     for x in range(building.x1, building.x2+1):
         for y in range(building.y1, building.y2+1):
-            map[x][y].blocked = False
-            map[x][y].block_sight = False
-            map[x][y].fore = color_ground
-            map[x][y].back = color_ground
-            map[x][y].outdoors = False
+            mymap[x][y].blocked = False
+            mymap[x][y].block_sight = False
+            mymap[x][y].fore = color_ground
+            mymap[x][y].back = color_ground
+            mymap[x][y].outdoors = False
 
     #Create walls of building 
     for x in range(building.x1, building.x2+1):
-        map[x][building.y1].blocked = True
-        map[x][building.y1].block_sight = True
-        map[x][building.y1].fore = color_building
-        map[x][building.y1].back = color_building
-        map[x][building.y2].blocked = True
-        map[x][building.y2].block_sight = True
-        map[x][building.y2].fore = color_building
-        map[x][building.y2].back = color_building
+        mymap[x][building.y1].blocked = True
+        mymap[x][building.y1].block_sight = True
+        mymap[x][building.y1].fore = color_building
+        mymap[x][building.y1].back = color_building
+        mymap[x][building.y2].blocked = True
+        mymap[x][building.y2].block_sight = True
+        mymap[x][building.y2].fore = color_building
+        mymap[x][building.y2].back = color_building
     for y in range(building.y1, building.y2+1):
-        map[building.x1][y].blocked = True
-        map[building.x1][y].block_sight = True
-        map[building.x1][y].fore = color_building
-        map[building.x1][y].back = color_building
-        map[building.x2][y].blocked = True
-        map[building.x2][y].block_sight = True
-        map[building.x2][y].fore = color_building
-        map[building.x2][y].back = color_building
+        mymap[building.x1][y].blocked = True
+        mymap[building.x1][y].block_sight = True
+        mymap[building.x1][y].fore = color_building
+        mymap[building.x1][y].back = color_building
+        mymap[building.x2][y].blocked = True
+        mymap[building.x2][y].block_sight = True
+        mymap[building.x2][y].fore = color_building
+        mymap[building.x2][y].back = color_building
 
 def create_h_tunnel(x1, x2, y):
     global map
@@ -696,55 +718,55 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].blocked = False
         map[x][y].block_sight = False
 
-def make_surface_map(map_number):
+def make_surface_map():
     """
     Creates a map which is open by default, and then filled with boulders, mesas and buildings.
     Uses a 2D noise generator. The map has an impenetrable border.
     """
-    global list_of_maps, objects, stairs
+    global objects, stairs
     objects = [player]
 
     noise2d = libtcod.noise_new(2) #create a 2D noise generator
     libtcod.noise_set_type(noise2d, libtcod.NOISE_SIMPLEX) #tell it to use simplex noise for higher contrast
 
     # Create the map with a default tile choice of empty unblocked squares.
-    map = [[ Tile(blocked=False, block_sight=False, char=' ', fore=color_ground, back=color_ground) 
+    mymap = [[ Tile(blocked=False, block_sight=False, char=' ', fore=color_ground, back=color_ground) 
         for y in range(MAP_HEIGHT)] 
             for x in range(MAP_WIDTH) ]
 
     #Put a border around the map so the characters can't go off the edge of the world
     for x in range(0, MAP_WIDTH):
-        map[x][0].blocked = True
-        map[x][0].block_sight = True
-        map[x][0].mapedge = True
-        map[x][0].fore = color_wall
-        map[x][0].back = color_wall
-        map[x][MAP_HEIGHT-1].blocked = True
-        map[x][MAP_HEIGHT-1].block_sight = True
-        map[x][MAP_HEIGHT-1].mapedge = True
-        map[x][MAP_HEIGHT-1].fore = color_wall
-        map[x][MAP_HEIGHT-1].back = color_wall
+        mymap[x][0].blocked = True
+        mymap[x][0].block_sight = True
+        mymap[x][0].mapedge = True
+        mymap[x][0].fore = color_wall
+        mymap[x][0].back = color_wall
+        mymap[x][MAP_HEIGHT-1].blocked = True
+        mymap[x][MAP_HEIGHT-1].block_sight = True
+        mymap[x][MAP_HEIGHT-1].mapedge = True
+        mymap[x][MAP_HEIGHT-1].fore = color_wall
+        mymap[x][MAP_HEIGHT-1].back = color_wall
     for y in range(0, MAP_HEIGHT):
-        map[0][y].blocked = True
-        map[0][y].block_sight = True
-        map[0][y].mapedge = True
-        map[0][y].fore = color_wall
-        map[0][y].back = color_wall
-        map[MAP_WIDTH-1][y].blocked = True
-        map[MAP_WIDTH-1][y].block_sight = True
-        map[MAP_WIDTH-1][y].mapedge = True
-        map[MAP_WIDTH-1][y].fore = color_wall
-        map[MAP_WIDTH-1][y].back = color_wall
+        mymap[0][y].blocked = True
+        mymap[0][y].block_sight = True
+        mymap[0][y].mapedge = True
+        mymap[0][y].fore = color_wall
+        mymap[0][y].back = color_wall
+        mymap[MAP_WIDTH-1][y].blocked = True
+        mymap[MAP_WIDTH-1][y].block_sight = True
+        mymap[MAP_WIDTH-1][y].mapedge = True
+        mymap[MAP_WIDTH-1][y].fore = color_wall
+        mymap[MAP_WIDTH-1][y].back = color_wall
 
     # Create natural looking landscape
     for x in range(1, MAP_WIDTH-1):
         for y in range(1, MAP_HEIGHT-1):
             if libtcod.noise_get_turbulence(noise2d, [x, y], 128.0, libtcod.NOISE_SIMPLEX) < 0.4:
                 #Turbulent simplex noise returns values between 0.0 and 1.0, with many values greater than 0.9.
-                map[x][y].blocked = True
-                map[x][y].block_sight = True
-                map[x][y].fore = color_wall
-                map[x][y].back = color_wall
+                mymap[x][y].blocked = True
+                mymap[x][y].block_sight = True
+                mymap[x][y].fore = color_wall
+                mymap[x][y].back = color_wall
 
     # Place buildings
     buildings = []
@@ -755,7 +777,7 @@ def make_surface_map(map_number):
         x = libtcod.random_get_int(0, 0, MAP_WIDTH - w - 1)
         y = libtcod.random_get_int(0, 0, MAP_HEIGHT - h - 1)
         new_building = Rect(x, y, w, h)
-        create_building(new_building)
+        create_building(mymap, new_building)
         buildings.append(new_building)
         num_buildings += 1
 
@@ -774,42 +796,39 @@ def make_surface_map(map_number):
     #             if case(2): 
     #                 choice = random_choice(door_chances)
         doorx, doory = place.middle_of_wall('left')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: 
-            map[doorx][doory].char = 29
-            map[doorx][doory].blocked = False 
-            map[doorx][doory].fore = libtcod.white
-            map[doorx][doory].back = libtcod.grey
+        if mymap[doorx][doory].blocked and not mymap[doorx][doory].mapedge: 
+            mymap[doorx][doory].char = 29
+            mymap[doorx][doory].blocked = False 
+            mymap[doorx][doory].fore = libtcod.white
+            mymap[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('top')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge:
-            map[doorx][doory].char = 18
-            map[doorx][doory].blocked = False 
-            map[doorx][doory].fore = libtcod.white
-            map[doorx][doory].back = libtcod.grey
+        if mymap[doorx][doory].blocked and not mymap[doorx][doory].mapedge:
+            mymap[doorx][doory].char = 18
+            mymap[doorx][doory].blocked = False 
+            mymap[doorx][doory].fore = libtcod.white
+            mymap[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('right')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: 
-            map[doorx][doory].char = 29
-            map[doorx][doory].blocked = False 
-            map[doorx][doory].fore = libtcod.white
-            map[doorx][doory].back = libtcod.grey
+        if mymap[doorx][doory].blocked and not mymap[doorx][doory].mapedge: 
+            mymap[doorx][doory].char = 29
+            mymap[doorx][doory].blocked = False 
+            mymap[doorx][doory].fore = libtcod.white
+            mymap[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('bottom')
-        if map[doorx][doory].blocked and not map[doorx][doory].mapedge: 
-            map[doorx][doory].char = 18
-            map[doorx][doory].blocked = False 
-            map[doorx][doory].fore = libtcod.white
-            map[doorx][doory].back = libtcod.grey
+        if mymap[doorx][doory].blocked and not mymap[doorx][doory].mapedge: 
+            mymap[doorx][doory].char = 18
+            mymap[doorx][doory].blocked = False 
+            mymap[doorx][doory].fore = libtcod.white
+            mymap[doorx][doory].back = libtcod.grey
 
-        place_objects(place) #add some contents to this room
+        place_objects(mymap, place) #add some contents to this room
 
     # Scatter debris around the map to add flavor:
-    place_junk()
+    place_junk(mymap)
 
     # Choose a spot for the player to start
-    player.x, player.y = choose_random_unblocked_spot()
+    player.x, player.y = choose_random_unblocked_spot(mymap)
 
-    # Add this map to the grand list of maps:
-    list_of_maps.append(map)
-    map_number += 1
-    return map_number
+    return mymap
 
 
 def make_underground_map():
@@ -872,17 +891,18 @@ def make_underground_map():
     objects.append(stairs)
     stairs.send_to_back() #so that it gets drawn below monsters
 
-def next_level():
-    global map_number
+def next_level(list_of_maps, map_number):
 
     message('You rest for a moment and recover your strength.', libtcod.light_violet)
     player.fighter.heal(player.fighter.max_hp / 2)
 
-    message('You descend deeper into the dungeon...', libtcod.red)
+    message('You move onward to the next area...', libtcod.red)
     map_number += 1
-    make_surface_map() # a fresh level!
-    initialize_fov()
-    
+    nextmap = make_surface_map() # a fresh level!
+    list_of_maps.append(GameMap(map_number, nextmap, 'surface'))
+    print 'Inside next level, map number is: ' + str(map_number)
+    initialize_fov(nextmap)
+
 def random_choice_index(chances):
     """
     When given a list of chances, such as [80, 10, 10], it will randomly choose one according to
@@ -909,7 +929,7 @@ def random_choice(chances_dict):
 
     return strings[random_choice_index(chances)] # returns the key which corresponds to the chosen chance
 
-def from_map_number(table):
+def from_difficulty_level(table):
     """
     Returns a value that depends on level. The table must be a list of [value, level] pairs. For example, 
     a square progression of [x**2, x] would be:
@@ -920,11 +940,11 @@ def from_map_number(table):
     TODO: Use sorting to enforce the assumption that the table is in ascending order.
     """
     for (value, level) in reversed(table):
-        if map_number >= level:
+        if difficulty_level >= level:
             return value
     return 0  #default is zero
 
-def place_junk():
+def place_junk(mymap):
     """
     Puts boulders, rocks, junk and/or plants around the map. Eventually I want it to accept a map as an 
     argument and depending on the type of map, (outdoors vs indoors, surface vs cavern, etc) place
@@ -932,7 +952,6 @@ def place_junk():
     """
     # Ideally I can eventually get rid of this global statement and just accept a map object when we 
     # get to the point where there are many different maps stored (to allow returning to previous areas).
-    global map
 
     debris = {}
     debris['nothing'] = 100
@@ -942,21 +961,21 @@ def place_junk():
 
     for y in range(MAP_HEIGHT): 
             for x in range(MAP_WIDTH):
-                if map[x][y].outdoors and not map[x][y].blocked:
+                if mymap[x][y].outdoors and not mymap[x][y].blocked:
                     choice = random_choice(debris)
                     if choice == 'nothing':
                         pass
                     elif choice == 'stone':
-                        map[x][y].char = '.'
-                        map[x][y].fore = libtcod.dark_sepia
+                        mymap[x][y].char = '.'
+                        mymap[x][y].fore = libtcod.dark_sepia
                     elif choice == 'boulder':
-                        map[x][y].char = 7 # bullet point
-                        map[x][y].fore = libtcod.dark_sepia
+                        mymap[x][y].char = 7 # bullet point
+                        mymap[x][y].fore = libtcod.dark_sepia
                     else: # gravel
-                        map[x][y].char = 176
-                        map[x][y].fore = libtcod.dark_red
+                        mymap[x][y].char = 176
+                        mymap[x][y].fore = libtcod.dark_red
 
-def draw_things():
+def draw_things(list_of_maps, map_number):
     """
     This lets the player place things using the mouse by clicking on a tile and drawing over multiple
     tiles. Unforunately it looks like libtcod 1.5.1 has a bug where getting the (dcx, dcy) values from
@@ -970,7 +989,7 @@ def draw_things():
         # Rendering the screen first closes the menu and returns to the map, ready to place something
         libtcod.console_flush()
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)        
-        render_all()
+        render_all(list_of_maps, map_number)
 
         xlist = []
         ylist = []
@@ -988,26 +1007,29 @@ def draw_things():
             return (xlist, ylist)
 
 
-def place_objects(room):
+def place_objects(mymap, room):
     """Puts stuff all over the map AFTER the map has been created."""
     # max number of monsters per room:
-    max_monsters = from_map_number( [ [2, 1], [3, 4], [5, 6] ] )
+    #max_monsters = from_difficulty_level( [ [2, 1], [3, 4], [5, 6] ] )
+    max_monsters = 2
 
     #chance of each monster
     monster_chances = {} # so that we can build the dict below
     monster_chances['robot'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
-    monster_chances['security bot'] = from_map_number( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
+    #monster_chances['security bot'] = from_difficulty_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
+    monster_chances['security bot'] = 10
     monster_chances['explorer'] = 80
 
     #maximum number of items per room
-    max_items = from_map_number( [ [1, 1], [2, 4] ] )
+    #max_items = from_difficulty_level( [ [1, 1], [2, 4] ] )
+    max_items = 1
 
     #chance of each item. By default they have a chance of 0 at level 1, which then increases.
     item_chances = {}
     item_chances['heal'] = 35 #heal pots always show up
-    item_chances['lightning'] = from_map_number([[25, 4]])
-    item_chances['fireball'] =  from_map_number([[25, 6]])
-    item_chances['confuse'] =   from_map_number([[10, 2]])
+    #item_chances['lightning'] = from_difficulty_level([[25, 4]])
+    #item_chances['fireball'] =  from_difficulty_level([[25, 6]])
+    #item_chances['confuse'] =   from_difficulty_level([[10, 2]])
     item_chances['sword'] = 25
     item_chances['shield'] = 15
  
@@ -1020,26 +1042,26 @@ def place_objects(room):
         y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
         
         #Create the monster
-        if not is_blocked(x, y):
+        if not is_blocked(mymap, x, y):
             choice = random_choice(monster_chances)
             if choice == 'robot': 
                 #Create an minor enemy
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
-                ai_component = BasicMonster()
+                ai_component = BasicMonster(mymap)
                 monster = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
                 monster.scifi_name = namegenerator()
             elif choice == 'security bot':
                 #Create a major enemy
                 fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=monster_death)
-                ai_component = BasicMonster()
+                ai_component = BasicMonster(mymap)
                 monster = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
                 monster.scifi_name = namegenerator()
 
             else:
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
-                ai_component = BasicExplorer()
+                ai_component = BasicExplorer(mymap)
                 monster = GamePiece(x, y, '@', 'explorer', libtcod.green, blocks=True,
                     fighter=fighter_component, ai=ai_component)
                 monster.ai.create_path()
@@ -1052,7 +1074,7 @@ def place_objects(room):
     for i in range(num_items):
         x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
         y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
-        if not is_blocked(x, y):
+        if not is_blocked(mymap, x, y):
             choice = random_choice(item_chances)
             if choice == 'heal':
                 #creating a healing potion:
@@ -1078,7 +1100,7 @@ def place_objects(room):
             objects.append(item)
             item.send_to_back() #make items appear below other objects
 
-def build_menu(header):
+def build_menu(mymap, header):
     """
     Show a menu of things which can be built using the mouse.
 
@@ -1093,7 +1115,7 @@ def build_menu(header):
         fast it can hang a bit.
     """
 
-    global objects, map
+    global objects
 
     options = [
                 'Plant a gene modified dwarf tree', 
@@ -1123,7 +1145,7 @@ def build_menu(header):
     objects.append(thing)
     thing.send_to_back()
     libtcod.console_flush()
-    render_all()    
+    render_all(mymap)    
 
 #==============================================================================
 # Graphics       
@@ -1234,41 +1256,40 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
     libtcod.console_print_ex(panel, x + total_width / 2, y, libtcod.BKGND_NONE, libtcod.CENTER,
         name + ': ' + str(value) + '/' + str(maximum))
         
-def render_all():
+def render_all(map_to_be_rendered):
     """Draw everything on to the screen. This is where all the consoles get blit'd."""
     global fov_map, fov_recompute
-    global map_number
 
     if fov_recompute:
-        fov_recompute = False
         libtcod.map_compute_fov(fov_map, player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
+        fov_recompute = False
 
     # go through all tiles and set character, foreground and background according to FOV
     for y in range(MAP_HEIGHT):
         for x in range(MAP_WIDTH):
             visible = libtcod.map_is_in_fov(fov_map, x, y)
-            wall = map[x][y].block_sight
+            wall = map_to_be_rendered[x][y].block_sight
             if not visible:
-                if map[x][y].explored:
+                if map_to_be_rendered[x][y].explored:
                     # Draw things outside of vision which are remembered
                     if wall:
-                        libtcod.console_put_char_ex(con, x, y, map[x][y].char, 
-                            libtcod.light_gray * map[x][y].fore, libtcod.light_gray * map[x][y].back)
+                        libtcod.console_put_char_ex(con, x, y, map_to_be_rendered[x][y].char, 
+                            libtcod.light_gray * map_to_be_rendered[x][y].fore, libtcod.light_gray * map_to_be_rendered[x][y].back)
                     else:
-                        libtcod.console_put_char_ex(con, x, y, map[x][y].char, 
-                            libtcod.dark_grey * map[x][y].fore, libtcod.dark_grey * map[x][y].back)
+                        libtcod.console_put_char_ex(con, x, y, map_to_be_rendered[x][y].char, 
+                            libtcod.dark_grey * map_to_be_rendered[x][y].fore, libtcod.dark_grey * map_to_be_rendered[x][y].back)
                         # TODO: Draw non-map things which are always visible, such as some objects.
                         # Currently objects with always_visible=True do not get shaded darker when
                         # outside of view. :-(
 
             else:
             # Currently visible things
-                libtcod.console_put_char_ex(con, x, y, map[x][y].char, map[x][y].fore, map[x][y].back)
-                map[x][y].explored = True
+                libtcod.console_put_char_ex(con, x, y, map_to_be_rendered[x][y].char, map_to_be_rendered[x][y].fore, map_to_be_rendered[x][y].back)
+                map_to_be_rendered[x][y].explored = True
     for object in objects:
         if object != player:
-            object.draw()
-    player.draw() #if we didn't draw this separately, corpses and items sometimes get drawn over the player
+            object.draw(map_to_be_rendered)
+    player.draw(map_to_be_rendered) #if we didn't draw this separately, corpses and items sometimes get drawn over the player
     
     # blit the contents of "con" to the root console to display them
     libtcod.console_blit(con, 0, 0, MAP_WIDTH, MAP_HEIGHT, 0, 0, 0)
@@ -1286,19 +1307,19 @@ def render_all():
     #show the player's stats
     render_bar(1, 1, BAR_WIDTH, 'HP', player.fighter.hp, player.fighter.max_hp,
         libtcod.light_red, libtcod.darker_red)
-    #display dungeon level
-    libtcod.console_print_ex(panel, 1, 3, libtcod.BKGND_NONE, libtcod.LEFT, 'Dungeon level ' +
-         str(map_number))
+    #display location
+    libtcod.console_print_ex(panel, 1, 3, libtcod.BKGND_NONE, libtcod.LEFT, 'Location: ' +
+         str(map_to_be_rendered.location))
     #display names of objects under the mouse
     libtcod.console_set_default_foreground(panel, libtcod.light_gray)
-    libtcod.console_print_ex(panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse())
+    libtcod.console_print_ex(panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse(map_to_be_rendered))
     #blit the contents of "panel" to the root console
     libtcod.console_blit(panel, 0, 0, SCREEN_WIDTH, PANEL_HEIGHT, 0, 0, PANEL_Y)
     
 #==============================================================================
 # Keyboard and Mouse management        
 #==============================================================================
-def player_move_or_attack(dx, dy):
+def player_move_or_attack(mymap, dx, dy):
     """
     This function determines whether the player moves into an empty space or interacts 
     with a creature or thing in that space (which means no movement).
@@ -1320,11 +1341,11 @@ def player_move_or_attack(dx, dy):
     if target is not None:
         player.fighter.attack(target)
     else:
-        player.move(dx, dy)
+        player.move(mymap, dx, dy)
         fov_recompute = True
 
-def get_names_under_mouse():
-    global mouse, map
+def get_names_under_mouse(mymap):
+    global mouse
     
     #return a string with the names of all objects under the mouse
     (x, y) = (mouse.cx, mouse.cy)    
@@ -1332,8 +1353,8 @@ def get_names_under_mouse():
     names = [obj.name for obj in objects if obj.x == x and obj.y == y and libtcod.map_is_in_fov(fov_map, obj.x, obj.y)]
     
     # If there is junk placed, explain what it is
-    if map[x][y].char is not ' ':
-        for case in switch(map[x][y].char):
+    if mymap[x][y].char is not ' ':
+        for case in switch(mymap[x][y].char):
             if case('.'): 
                 names.append('a stone')
                 break
@@ -1348,11 +1369,13 @@ def get_names_under_mouse():
     names = ', '.join(names) #concatenates the names into a big string, separated by a comma
     return names.capitalize() 
     
-def handle_keys():
+def handle_keys(list_of_maps, map_number):
     """Handles all keyboard input."""
     global fov_recompute
     global key
-    global map, objects
+    global objects
+
+    mymap = list_of_maps[map_number]
 
     if key.vk == libtcod.KEY_ENTER and key.lalt:
         #Alt+Enter: toggle fullscreen
@@ -1369,21 +1392,21 @@ def handle_keys():
             return
 
         if key.vk == libtcod.KEY_UP or key.vk == libtcod.KEY_KP8:
-            player_move_or_attack(0, -1)
+            player_move_or_attack(mymap, 0, -1)
         elif key.vk == libtcod.KEY_DOWN or key.vk == libtcod.KEY_KP2:
-            player_move_or_attack(0, 1)
+            player_move_or_attack(mymap, 0, 1)
         elif key.vk == libtcod.KEY_LEFT or key.vk == libtcod.KEY_KP4:
-            player_move_or_attack(-1, 0)
+            player_move_or_attack(mymap, -1, 0)
         elif key.vk == libtcod.KEY_RIGHT or key.vk == libtcod.KEY_KP6:
-            player_move_or_attack(1, 0)
+            player_move_or_attack(mymap, 1, 0)
         elif key.vk == libtcod.KEY_HOME or key.vk == libtcod.KEY_KP7:
-            player_move_or_attack(-1, -1)
+            player_move_or_attack(mymap, -1, -1)
         elif key.vk == libtcod.KEY_PAGEUP or key.vk == libtcod.KEY_KP9:
-            player_move_or_attack(1, -1)
+            player_move_or_attack(mymap, 1, -1)
         elif key.vk == libtcod.KEY_END or key.vk == libtcod.KEY_KP1:
-            player_move_or_attack(-1, 1)
+            player_move_or_attack(mymap, -1, 1)
         elif key.vk == libtcod.KEY_PAGEDOWN or key.vk == libtcod.KEY_KP3:
-            player_move_or_attack(1, 1)
+            player_move_or_attack(mymap, 1, 1)
         elif key.vk == libtcod.KEY_KP5:
             pass  #do nothing ie wait for the monster to come to you
             
@@ -1410,20 +1433,34 @@ def handle_keys():
                     chosen_item.drop()
 
             if key_char == '>':
-                #go down stairs
+                #go to next map
                 if stairs.x == player.x and stairs.y == player.y:
-                    next_level()
+                    print 'Going down stairs. Map number is: ' + str(map_number)
+                    next_level(list_of_maps, map_number)
+                    map_number += 1
+                    return 'next_map'
+
+            if key_char == '<':
+                #go to previous map
+                if upstairs.x == player.x and stairs.y == player.y:
+                    print 'Going up stairs. Map number is: ' + str(map_number)
+                    map_number -= 1
+                    return 'previous_map'
+
 
             if key_char == 'c':
                 #show character sheeet
                 level_up_xp = LEVEL_UP_BASE + player.level * LEVEL_UP_FACTOR
-                msgbox('Character Information\n\nLevel: ' + str(player.level) + '\nExperience: ' + str(player.fighter.xp) +
+                msgbox(
+                    'Character Information\n\nLevel: ' + str(player.level) + '\nExperience: ' + str(player.fighter.xp) +
                     '\nExperience to level up: ' + str(level_up_xp) + '\n\nMaximum HP: ' + str(player.fighter.max_hp) +
-                    '\nAttack: ' + str(player.fighter.power) + '\nDefense: ' + str(player.fighter.defense), CHARACTER_SCREEN_WIDTH)
+                    '\nAttack: ' + str(player.fighter.power) + '\nDefense: ' + str(player.fighter.defense), 
+                    CHARACTER_SCREEN_WIDTH)
 
             if key_char == 'h':
                 #show help screen
-                msgbox('The available keys are:\n' +
+                msgbox(
+                    'The available keys are:\n' +
                     'keypad: Movement\n' +
                     'g: Get an item\n' +
                     'i: Show the inventory\n' +
@@ -1433,13 +1470,14 @@ def handle_keys():
                     'q: Build something in a tile\n' +
                     '\nDebugging:\n' +
                     'm: Reveal map\n' +
-                    'p: Print player coordinates', CHARACTER_SCREEN_WIDTH)
+                    'p: Print player coordinates', 
+                    CHARACTER_SCREEN_WIDTH)
 
             if key_char == 'm':
                 #Debugging - display whole map
                 for y in range(MAP_HEIGHT):
                     for x in range(MAP_WIDTH):
-                        map[x][y].explored = True
+                        mymap[x][y].explored = True
 
             if key_char == 'p':
                 #Debugging - give us the player's coordinates
@@ -1447,7 +1485,7 @@ def handle_keys():
 
             if key_char == 'q':
                 # Display a menu from which the player can choose something to place on the map using the mouse.
-                build_menu('Choose something to place with the mouse:\n')
+                build_menu(mymap, 'Choose something to place with the mouse:\n')
                     
             return 'didnt_take_turn'
          
@@ -1456,7 +1494,7 @@ def handle_keys():
 #############################################
  
 def new_game():
-    global player, inventory, game_msgs, game_state, map_number, list_of_maps
+    global player, inventory, game_msgs, game_state
     
     #Creating the object representing the player:
     fighter_component = Fighter(hp=30, defense=2, power=5, xp=0, death_function=player_death) #creating the fighter aspect of the player
@@ -1465,9 +1503,10 @@ def new_game():
     map_number = 0
     list_of_maps = []
 
-    #generate map, but at this point its not drawn to the screen    
-    map_number = make_surface_map(map_number)
-    initialize_fov()
+    #generate map, but at this point it's not drawn to the screen    
+    newmap = make_surface_map()
+    list_of_maps.append(GameMap(map_number, newmap, 'surface'))
+    initialize_fov(newmap)
 
     game_state = 'playing'
     inventory = []    
@@ -1477,7 +1516,9 @@ def new_game():
 
     message('Welcome to Mars! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.', libtcod.red)
 
-def initialize_fov():
+    return list_of_maps, map_number
+
+def initialize_fov(mymap):
     """This is needed to allow field of view stuff."""
     global fov_recompute, fov_map
     fov_recompute = True
@@ -1486,7 +1527,7 @@ def initialize_fov():
     fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
     for y in range(MAP_HEIGHT):
         for x in range(MAP_WIDTH):
-            libtcod.map_set_properties(fov_map, x, y, not map[x][y].block_sight, not map[x][y].blocked)
+            libtcod.map_set_properties(fov_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
             
     libtcod.console_clear(con)
 
@@ -1495,7 +1536,7 @@ def initialize_pathmap():
     global path, fov_map
     path = libtcod.path_new_using_map(fov_map)
 
-def play_game():
+def play_game(list_of_maps, map_number):
     """This function contains the while loop."""
     #====================
     # THE MAIN LOOP
@@ -1508,8 +1549,8 @@ def play_game():
     key = libtcod.Key()
     while not libtcod.console_is_window_closed():
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
-        render_all() #render the screen
-       
+        mymap = list_of_maps[map_number]
+        render_all(mymap) #render the screen
         libtcod.console_flush()
 
         check_level_up()
@@ -1519,11 +1560,17 @@ def play_game():
             object.clear()
     
         #handle keys and exit game if needed
-        player_action = handle_keys()
+        player_action = handle_keys(list_of_maps, map_number)
         if player_action == 'exit':
             save_game()
             break
         
+        if player_action == 'next_map':
+            map_number += 1
+
+        if player_action == 'previous_map':
+            map_number -= 1
+
         #let monsters take their turn
         if game_state == 'playing': #and player_action != 'didnt_take_turn': #let monsters take their turn
             for object in objects:
@@ -1559,15 +1606,15 @@ def main_menu():
         #show options and wait for the player's choice
         choice = menu('', ['New Game', 'Continue', 'Quit'], 24)
         if choice == 0: #new game
-            new_game()
-            play_game()
+            list_of_maps, map_number = new_game()
+            play_game(list_of_maps, map_number)
         elif choice == 1: #load game
             try:
                 load_game()
             except:
                 msgbox('\n No saved game to load.\n', 24)
                 continue
-            play_game()
+            play_game(list_of_maps, map_number)
         elif choice == 2: #quit
             break
 
