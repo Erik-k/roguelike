@@ -16,14 +16,14 @@ from random import choice
 
 #actual size of the window
 SCREEN_WIDTH = 80
-SCREEN_HEIGHT = 50
+SCREEN_HEIGHT = 60
 MAP_WIDTH = 80
 MAP_HEIGHT = 43
 INVENTORY_WIDTH = 50
 
 #sizes and coords for the GUI
 BAR_WIDTH = 20
-PANEL_HEIGHT = 7
+PANEL_HEIGHT = 17
 PANEL_Y = SCREEN_HEIGHT - PANEL_HEIGHT
 MSG_X = BAR_WIDTH + 2  #this makes sure that the messages get placed next to the health bar
 MSG_WIDTH = SCREEN_WIDTH - BAR_WIDTH -2
@@ -50,7 +50,7 @@ LEVEL_UP_BASE = 200
 LEVEL_UP_FACTOR = 150
 
 LIMIT_FPS = 20  #20 frames-per-second maximum
-PLAYER_SPEED = 2
+PLAYER_SPEED = 1
 DEFAULT_SPEED = 8
 DEFAULT_ATTACK_SPEED = 20
 
@@ -183,14 +183,14 @@ class GamePiece(object):
     def send_to_back(self):
         """
         Make this thing get drawn first, so that everything else appears above it if on the same tile
-        otherwise monster corpses get drawn on top of monsters sometimes.
+        otherwise NPC corpses get drawn on top of NPCs sometimes.
         """
         global objects
         objects.remove(self)
         objects.insert(0, self)
         
 class Fighter(object):
-    """Combat related properties and methods (monster, player, NPC)."""
+    """Combat related properties and methods (NPC, player, NPC)."""
     def __init__(self, hp, defense, power, xp, death_function=None, attack_speed=DEFAULT_ATTACK_SPEED):
         self.base_max_hp = hp
         self.hp = hp
@@ -343,7 +343,7 @@ def get_all_equipped(obj):
                 equipped_list.append(item.equipment)
         return equipped_list
     else:
-        #other objects such as monsters do not currently have equipment. If they do, change this.
+        #other objects such as NPCs do not currently have equipment. If they do, change this.
         return []
 
 #============================================================= 
@@ -368,14 +368,14 @@ def target_tile(mymap, max_range=None):
         if mouse.rbutton_pressed or key.vk == libtcod.KEY_ESCAPE:
             return (None, None) # have to return a tuple with 2 output args
             
-def target_monster(mymap, max_range=None):
-    """Returns a clicked monster inside FOV up to a range, or None if right-click to cancel."""
+def target_NPC(mymap, max_range=None):
+    """Returns a clicked NPC inside FOV up to a range, or None if right-click to cancel."""
     while True:
         (x, y) = target_tile(mymap, max_range)
         if x is None: #player canceled
             return None
             
-        #return the first clicked monster, otherwise continue looping
+        #return the first clicked NPC, otherwise continue looping
         for obj in objects:
             if obj.x == x and obj.y == y and obj.fighter and obj != player:
                 return obj
@@ -394,16 +394,16 @@ def cast_heal():
 
 def cast_lightning():
     """Find the closest enemy inside a max range and damage it."""
-    monster = closest_monster(LIGHTNING_RANGE)
-    if monster is None:
+    NPC = closest_NPC(LIGHTNING_RANGE)
+    if NPC is None:
         message('No enemy is close enough to strike.', libtcod.azure)
         return 'cancelled'
         
-    message('A lightning bolt strikes the ' + monster.name + ' with a loud thunderclap! The damage is '
+    message('A lightning bolt strikes the ' + NPC.name + ' with a loud thunderclap! The damage is '
         + str(LIGHTNING_DAMAGE) + ' hit points.', libtcod.light_blue)
-    monster.fighter.take_damage(LIGHTNING_DAMAGE)
+    NPC.fighter.take_damage(LIGHTNING_DAMAGE)
 
-def closest_monster(max_range):
+def closest_NPC(max_range):
     closest_enemy = None
     closest_dist = max_range + 1
     
@@ -418,14 +418,14 @@ def closest_monster(max_range):
 def cast_confuse():
     #ask the player for a target to confuse
     message('Left-click an enemy to confuse it, or right-click to cancel.', libtcod.light_green)
-    monster = target_monster(CONFUSE_RANGE)
-    if monster is None: return 'cancelled'
+    NPC = target_NPC(CONFUSE_RANGE)
+    if NPC is None: return 'cancelled'
     
-    #replace the monster's AI with the confused AI
-    old_ai = monster.ai
-    monster.ai = ConfusedMonster(old_ai)
-    monster.ai.owner = monster #you need to tell the new component who owns it every time you replace a component during runtime
-    message('The ' + monster.name + ' starts to stumble around!', libtcod.light_green)
+    #replace the NPC's AI with the confused AI
+    old_ai = NPC.ai
+    NPC.ai = ConfusedNPC(old_ai)
+    NPC.ai.owner = NPC #you need to tell the new component who owns it every time you replace a component during runtime
+    message('The ' + NPC.name + ' starts to stumble around!', libtcod.light_green)
     
 def cast_fireball():
     #ask the player for a target tile at which to throw a fireball:
@@ -454,28 +454,28 @@ def cast_fireball():
 #        elif self.state == 'running away': ...
 # This is preferable to swapping AI components like a state machine which can get overly complicated.
 
-class BasicMonster(object):
-    """AI module for a basic monster."""
+class BasicNPC(object):
+    """AI module for a basic NPC."""
     def __init__(self, mymap):
         self.mymap = mymap
 
     def take_turn(self):
-        #the monster takes its turn. If you can see it it can see you
-        monster = self.owner
-        if libtcod.map_is_in_fov(fov_map, monster.x, monster.y):
+        #the NPC takes its turn. If you can see it it can see you
+        NPC = self.owner
+        if libtcod.map_is_in_fov(fov_map, NPC.x, NPC.y):
             # move towards player if far away
-            if monster.distance_to(player) >= 2:
-                monster.move_towards(self.mymap, player.x, player.y)
+            if NPC.distance_to(player) >= 2:
+                NPC.move_towards(self.mymap, player.x, player.y)
             # if close enough, attack!
             elif player.fighter.hp > 0:
-                monster.fighter.attack(player)
+                NPC.fighter.attack(player)
                 if not self.owner.spoken: 
                     message('My name is ' + self.owner.scifi_name +' and I am programmed to destroy!', libtcod.magenta)
                     self.owner.spoken = True
 
             
-class ConfusedMonster(object):
-    """AI for a confused monster. Must take previous AI as argument so it can revert to it after a while."""
+class ConfusedNPC(object):
+    """AI for a confused NPC. Must take previous AI as argument so it can revert to it after a while."""
     def __init__(self, old_ai, num_turns=CONFUSE_NUM_TURNS):
         self.old_ai = old_ai
         self.num_turns = num_turns
@@ -562,16 +562,16 @@ def player_death(player):
     player.color = libtcod.dark_red
     player.name = 'remains of ' + player.name
     
-def monster_death(monster):
+def NPC_death(NPC):
     """Transform into a corpse which doesn't block, can't move, and can't be attacked."""
-    message(monster.name.capitalize() + ' dies! You gain ' + str(monster.fighter.xp) + ' experience points.', libtcod.orange)
-    monster.char = '%'
-    monster.color = libtcod.dark_red
-    monster.blocks = False
-    monster.fighter = None
-    monster.ai = None # important to make sure they dont keep acting! Unless they're a ghost...
-    monster.name = 'remains of ' + monster.name
-    monster.send_to_back()
+    message(NPC.name.capitalize() + ' dies! You gain ' + str(NPC.fighter.xp) + ' experience points.', libtcod.orange)
+    NPC.char = '%'
+    NPC.color = libtcod.dark_red
+    NPC.blocks = False
+    NPC.fighter = None
+    NPC.ai = None # important to make sure they dont keep acting! Unless they're a ghost...
+    NPC.name = 'remains of ' + NPC.name
+    NPC.send_to_back()
     
 def namegenerator():
     """Create a random male or female demon name and return it as a string."""
@@ -792,7 +792,7 @@ def make_surface_map():
             new_x, new_y = new_building.center()
             stairs = GamePiece(new_x, new_y, '>', 'stairs',  libtcod.white, always_visible=True)
             objects.append(stairs)
-            stairs.send_to_back() #so that it gets drawn below monsters
+            stairs.send_to_back() #so that it gets drawn below NPCs
 
     #Put doors in buildings. Have to do this AFTER they are built or later ones will overwrite earlier ones
     # door_chances = { 'left': 25, 'right': 25, 'top': 25, 'bottom': 25 }
@@ -895,7 +895,7 @@ def make_underground_map():
     #create stairs at the center of the last room
     stairs = GamePiece(new_x, new_y, '>', 'stairs',  libtcod.white, always_visible=True)
     objects.append(stairs)
-    stairs.send_to_back() #so that it gets drawn below monsters
+    stairs.send_to_back() #so that it gets drawn below NPCs
 
 def next_level(list_of_maps, map_number):
 
@@ -1015,16 +1015,16 @@ def draw_things(list_of_maps, map_number):
 
 def place_objects(mymap, room):
     """Puts stuff all over the map AFTER the map has been created."""
-    # max number of monsters per room:
-    #max_monsters = from_difficulty_level( [ [2, 1], [3, 4], [5, 6] ] )
-    max_monsters = 2
+    # max number of NPCs per room:
+    #max_NPCs = from_difficulty_level( [ [2, 1], [3, 4], [5, 6] ] )
+    max_NPCs = 2
 
-    #chance of each monster
-    monster_chances = {} # so that we can build the dict below
-    monster_chances['robot'] = 80 #this means that orcs always show up, even if other monsters have 0 chance
-    #monster_chances['security bot'] = from_difficulty_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
-    monster_chances['security bot'] = 10
-    monster_chances['explorer'] = 80
+    #chance of each NPC
+    NPC_chances = {} # so that we can build the dict below
+    NPC_chances['robot'] = 80 #this means that orcs always show up, even if other NPCs have 0 chance
+    #NPC_chances['security bot'] = from_difficulty_level( [ [10, 1], [15, 3], [30, 5], [60, 7] ] )
+    NPC_chances['security bot'] = 10
+    NPC_chances['explorer'] = 80
 
     #maximum number of items per room
     #max_items = from_difficulty_level( [ [1, 1], [2, 4] ] )
@@ -1039,41 +1039,41 @@ def place_objects(mymap, room):
     item_chances['sword'] = 25
     item_chances['shield'] = 15
  
-    #choose a random number of monsters
-    num_monsters = libtcod.random_get_int(0, 0, max_monsters)
+    #choose a random number of NPCs
+    num_NPCs = libtcod.random_get_int(0, 0, max_NPCs)
 
-    for i in range(num_monsters):
-        #choose a spot for the monster
+    for i in range(num_NPCs):
+        #choose a spot for the NPC
         x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
         y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
         
-        #Create the monster
+        #Create the NPC
         if not is_blocked(mymap, x, y):
-            choice = random_choice(monster_chances)
+            choice = random_choice(NPC_chances)
             if choice == 'robot': 
                 #Create an minor enemy
-                fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
-                ai_component = BasicMonster(mymap)
-                monster = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
+                fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=NPC_death)
+                ai_component = BasicNPC(mymap)
+                NPC = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
-                monster.scifi_name = namegenerator()
+                NPC.scifi_name = namegenerator()
             elif choice == 'security bot':
                 #Create a major enemy
-                fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=monster_death)
-                ai_component = BasicMonster(mymap)
-                monster = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
+                fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=NPC_death)
+                ai_component = BasicNPC(mymap)
+                NPC = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
-                monster.scifi_name = namegenerator()
+                NPC.scifi_name = namegenerator()
 
             else:
-                fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=monster_death)
+                fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=NPC_death)
                 ai_component = BasicExplorer(mymap)
-                monster = GamePiece(x, y, '@', 'explorer', libtcod.green, blocks=True,
+                NPC = GamePiece(x, y, '@', 'explorer', libtcod.green, blocks=True,
                     fighter=fighter_component, ai=ai_component)
-                monster.ai.create_path()
+                NPC.ai.create_path()
 
             
-            objects.append(monster)
+            objects.append(NPC)
             
     #Create and place items
     num_items = libtcod.random_get_int(0, 0, max_items)
@@ -1444,7 +1444,7 @@ def handle_keys(list_of_maps, map_number):
         elif key.vk == libtcod.KEY_PAGEDOWN or key.vk == libtcod.KEY_KP3:
             player_move_or_attack(mymap, 1, 1)
         elif key.vk == libtcod.KEY_KP5:
-            pass  #do nothing ie wait for the monster to come to you
+            pass  #do nothing ie wait for the NPC to come to you
             
         else:
             #test for other keys
@@ -1534,7 +1534,7 @@ def new_game():
     
     #Creating the object representing the player:
     fighter_component = Fighter(hp=30, defense=2, power=5, xp=0, death_function=player_death) #creating the fighter aspect of the player
-    player = GamePiece(0, 0, '@', 'player', libtcod.white, blocks=True, fighter=fighter_component, speed=PLAYER_SPEED)
+    player = GamePiece(0, 0, 219, 'player', libtcod.white, blocks=False, fighter=fighter_component, speed=PLAYER_SPEED)
     player.level = 1
     map_number = 0
     list_of_maps = []
@@ -1607,8 +1607,8 @@ def play_game(list_of_maps, map_number):
         if player_action == 'previous_map':
             map_number -= 1
 
-        #let monsters take their turn
-        if game_state == 'playing': #and player_action != 'didnt_take_turn': #let monsters take their turn
+        #let NPCs take their turn
+        if game_state == 'playing': #and player_action != 'didnt_take_turn': #let NPCs take their turn
             for object in objects:
                 if object.ai:
                     if object.wait > 0: # don't take a turn yet if still waiting
@@ -1740,12 +1740,10 @@ main_menu()
 #   if the hardware renderers are supported. Libtcod has stuff to do that check.
 # * Make sure that name generation is not continuosly opening the name.cfg file, but rather just opening it once
 #   on startup and keeping it in memory after that. 
-# * Rename "monster" to "NPC"
+# * Rename "NPC" to "NPC"
 # * Scientists, laborers, engineers, with specializations:
 #   Botanist (farmer), Engineer (builder), Laborer (?? operators?). Use the object component method described in 
 #   tutorial 6.
-# * Test out AI by having characters randomly walk from one building to another to simulate
-#   a schedule. Have them say where they are going if the player bumps in to them or clicks on them.
 # * Add a computer, and if the player uses the computer it brings up an interactive command prompt, possibly
 #   in a separate window until they exit it. Make it gameplay relevant.
 #############################################
