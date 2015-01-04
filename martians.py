@@ -350,14 +350,14 @@ def get_all_equipped(obj):
 # Targeting and spell functions
 #============================================================= 
 
-def target_tile(max_range=None):
+def target_tile(mymap, max_range=None):
     """Return the position of a tile left-clicked in player's FOV (optionally in a range), or (None,None) if right-clicked."""
     global key, mouse
     while True:
         # render the screen, which erases the inventory screen and shows the names of objects under the mouse
         libtcod.console_flush()
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE, key, mouse)
-        render_all()
+        render_all(mymap)
         
         (x, y) = (mouse.cx, mouse.cy)
         #accept the target if the player clicked in FOV, and in case a range is specified, if it's in that range
@@ -368,10 +368,10 @@ def target_tile(max_range=None):
         if mouse.rbutton_pressed or key.vk == libtcod.KEY_ESCAPE:
             return (None, None) # have to return a tuple with 2 output args
             
-def target_monster(max_range=None):
+def target_monster(mymap, max_range=None):
     """Returns a clicked monster inside FOV up to a range, or None if right-click to cancel."""
     while True:
-        (x, y) = target_tile(max_range)
+        (x, y) = target_tile(mymap, max_range)
         if x is None: #player canceled
             return None
             
@@ -575,13 +575,19 @@ def monster_death(monster):
     
 def namegenerator():
     """Create a random male or female demon name and return it as a string."""
+
+    alphanumerics = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    choices = []
+    new_name = ''
+    for i in range(0, libtcod.random_get_int(0, 2, 4)):
+        choices.append(choice(alphanumerics))
+
     try:
         libtcod.namegen_parse('libtcod-1.5.1/data/namegen/mingos_demon.cfg')
         if libtcod.random_get_int(0, 0, 1):
-            new_name = libtcod.namegen_generate('demon male')
+            return new_name.join(choices[i] for i in range(len(choices))) + '-' + libtcod.namegen_generate('demon male')
         else:
-            new_name = libtcod.namegen_generate('demon female')
-        return new_name
+            return new_name.join(choices[i] for i in range(len(choices))) + '-' + libtcod.namegen_generate('demon female')
     except:
         print 'Cannot find name generator file. Is it in ./libtcod-1.5.1/data/namegen/mingos_demon.cfg ?'
 
@@ -1120,7 +1126,10 @@ def build_menu(mymap, header):
     options = [
                 'Plant a gene modified dwarf tree', 
                 'Place water',
-                'Place a beacon'
+                'Place a beacon',
+                'Lay a horizontal pipe',
+                'Lay a vertical pipe',
+                'Build a pipe junction'
     ]
     
     choice = menu(header, options, INVENTORY_WIDTH)
@@ -1128,24 +1137,45 @@ def build_menu(mymap, header):
     if choice is None: 
         return None
     if choice == 0:
-        (x, y) = target_tile()
+        (x, y) = target_tile(mymap)
         # draw_things() returns the mouse.dcx, mouse.dcy values for the console cells that were dragged over
         if x is not None and y is not None:
             thing = GamePiece(x, y, 6, 'tree', libtcod.darker_green, blocks=False, always_visible=True)
     elif choice == 1:
-        (x, y) = target_tile()
+        (x, y) = target_tile(mymap)
         if x is not None and y is not None:
             thing = GamePiece(x, y, 247, 'liquid water', libtcod.blue, blocks=True, always_visible=True)
-            map[x][y].back = libtcod.darker_blue
+            mymap[x][y].back = libtcod.darker_blue
     elif choice == 2:
-        (x, y) = target_tile()
+        (x, y) = target_tile(mymap)
         if x is not None and y is not None:
             thing = GamePiece(x, y, 143, 'a beacon', libtcod.brass * libtcod.dark_grey, blocks=False, always_visible=True)
-    
+    elif choice == 3:
+        # horizontal pipe
+        (x, y) = target_tile(mymap)
+        if x is not None and y is not None:
+            thing = GamePiece(x, y, 205, 'a pipe', libtcod.brass * libtcod.dark_grey, blocks=False, always_visible=True)
+    elif choice == 4:
+        # vertical pipe
+        (x, y) = target_tile(mymap)
+        if x is not None and y is not None:
+            thing = GamePiece(x, y, 186, 'a pipe', libtcod.brass * libtcod.dark_grey, blocks=False, always_visible=True)
+    elif choice == 5:
+        # pipe junction
+        (x, y) = target_tile(mymap)
+        if x is not None and y is not None:
+            thing = GamePiece(x, y, 206, 'a pipe', libtcod.brass * libtcod.dark_grey, blocks=False, always_visible=True)
+            #check_for_junction(mymap, x, y)
+
     objects.append(thing)
     thing.send_to_back()
+
     libtcod.console_flush()
     render_all(mymap)    
+
+def check_for_junction(mymap, pipex, pipey):
+    """This checks for a pipe junction and replaces the character with the relevant bent pipe character."""
+
 
 #==============================================================================
 # Graphics       
@@ -1349,6 +1379,12 @@ def get_names_under_mouse(mymap):
     
     #return a string with the names of all objects under the mouse
     (x, y) = (mouse.cx, mouse.cy)    
+    #print 'Getting names under mouse at: (' + str(x) + ', ' + str(y) + ').'
+
+    # check for valid mouse region to prevent buffer overflow if the mouse goes into the GUI
+    if y >= MAP_HEIGHT-1:
+        return
+
     #create a list with the names of all objects under the mouse AND in FOV 
     names = [obj.name for obj in objects if obj.x == x and obj.y == y and libtcod.map_is_in_fov(fov_map, obj.x, obj.y)]
     
@@ -1590,7 +1626,7 @@ def msgbox(text, width=50):
 def main_menu():
     """Displays splash screen and initial options such as new game, continue, save/load."""
     global end_credits
-    img = libtcod.image_load('menu_background1.png')
+    img = libtcod.image_load('2001_station_and_shuttle.png')
     end_credits = False
     while not libtcod.console_is_window_closed():
         #show the background image at 2x the normal resolution using special font characters to do sub-cell shading:
