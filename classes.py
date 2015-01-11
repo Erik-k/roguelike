@@ -2,38 +2,17 @@
 # This file holds the main class definitions for the game.
 #============================================================= 
 
+import libtcodpy as libtcod
+from math import sqrt
+from time import sleep
+from random import choice
+from constants import *
 
-from martians import *
+from utility_methods import switch, is_blocked
 
 PLAYER_SPEED = 1
 DEFAULT_SPEED = 8
 DEFAULT_ATTACK_SPEED = 20
-
-
-#============================================================= 
-# Implement a switch-case construction, from this website: http://code.activestate.com/recipes/410692/
-# Python doesn't have switch-case statements but I want to use it.
-#============================================================= 
-
-class switch(object):
-    def __init__(self, value):
-        self.value = value
-        self.fall = False
-
-    def __iter__(self):
-        """Return the match method once, then stop"""
-        yield self.match
-        raise StopIteration
-    
-    def match(self, *args):
-        """Indicate whether or not to enter a case suite"""
-        if self.fall or not args:
-            return True
-        elif self.value in args:
-            self.fall = True
-            return True
-        else:
-            return False
 
 #============================================================= 
 # Drawable objects
@@ -54,7 +33,8 @@ class GamePiece(object):
         ai=None, 
         item=None, 
         equipment=None, 
-        speed=DEFAULT_SPEED
+        speed=DEFAULT_SPEED,
+        inventory=None
         ):
 
         self.x = x
@@ -88,13 +68,19 @@ class GamePiece(object):
         self.speed = speed
         self.wait = 0
 
+        # The possessions of this NPC or player:
+        if inventory is None:
+            self.inventory = []
+        else:
+            self.inventory = inventory
+
         # For creatures with names
         self.scifi_name = None
         self.spoken = False
 
     def move(self, mymap, dx, dy):
         """Move to a coordinate if it isn't blocked."""
-        if not is_blocked(mymap, self.x + dx, self.y + dy):
+        if not is_blocked(mymap, mymap.objects, self.x + dx, self.y + dy):
             self.x += dx
             self.y += dy
 
@@ -129,13 +115,13 @@ class GamePiece(object):
         """Returns the distance between an object and a tile."""
         return math.sqrt( (x - self.x)**2 + (y - self.y)**2 )
         
-    def draw(self, mymap):
+    def draw(self, mymap, fov_map, con):
         """Set the color and then draw the object at its position."""
         if (libtcod.map_is_in_fov(fov_map, self.x, self.y) or (self.always_visible and mymap[self.x][self.y].explored)):
             libtcod.console_set_default_foreground(con, self.color)
             libtcod.console_put_char(con, self.x, self.y, self.char, libtcod.BKGND_NONE)
         
-    def clear(self):
+    def clear(self, con):
         """Erase the character that represents this object."""
         libtcod.console_put_char(con, self.x, self.y, ' ', libtcod.BKGND_NONE)
         
@@ -151,7 +137,16 @@ class GamePiece(object):
         
 class Fighter(object):
     """Combat related properties and methods (NPC, player, NPC)."""
-    def __init__(self, hp, defense, power, xp, death_function=None, attack_speed=DEFAULT_ATTACK_SPEED):
+    def __init__(
+        self, 
+        hp, 
+        defense, 
+        power, 
+        xp, 
+        death_function=None, 
+        attack_speed=DEFAULT_ATTACK_SPEED
+        ):
+
         self.base_max_hp = hp
         self.hp = hp
         self.base_defense = defense
@@ -214,7 +209,7 @@ class Item(object):
     def __init__(self, use_function=None):
         self.use_function = use_function
     
-    def use(self):
+    def use(self, creature):
         #Special case: if the object has the Equipment component, the "use" action is to equip/dequip
         if self.owner.equipment:
             self.owner.equipment.toggle_equip()
@@ -227,14 +222,14 @@ class Item(object):
             # This call to use_function includes the () because this is when it actually gets called. 
             # Above, where it doesn't have the (), it doesn't actually get called.
             if self.use_function() != 'cancelled':
-                inventory.remove(self.owner) #destroy after use unless the use was aborted
+                creature.inventory.remove(self.owner) #destroy after use unless the use was aborted
                 
-    def pick_up(self):
+    def pick_up(self, creature):
         #it needs to be added to the player's inventory and removed from the map
-        if len(inventory) >= 26:
+        if len(creature.inventory) >= 26:
             message('Your inventory is full, cannot pick up ' + self.owner.name + '.', libtcod.red)
         else:
-            inventory.append(self.owner)
+            creature.inventory.append(self.owner)
             objects.remove(self.owner)
             message('You picked up a ' + self.owner.name + '!', libtcod.green)
 
@@ -243,14 +238,14 @@ class Item(object):
         if equipment and get_equipped_in_slot(equipment.slot) is None:
             equipment.equip()
             
-    def drop(self):
+    def drop(self, creature):
         #Special case: if the object has the Equipment component, dequip it before dropping
         if self.owner.equipment:
             self.owner.equipment.dequip()
 
         #add to the map and remove from the player's inventory. Place it at the player's coordinates
         objects.append(self.owner)
-        inventory.remove(self.owner)
+        creature.inventory.remove(self.owner)
         self.owner.x = player.x
         self.owner.y = player.y
         message('You dropped a ' + self.owner.name + '.', libtcod.yellow)
@@ -287,21 +282,22 @@ class Equipment(object):
         self.is_equipped = False
         message('You\'ve unequipped ' + self.owner.name + ' from ' + self.slot + '.', libtcod.light_yellow)
 
-def get_equipped_in_slot(slot): 
+def get_equipped_in_slot(slot, creature): 
     """Returns the equipment in a slot, or None if its empty."""
-    for obj in inventory:
+    for obj in creature.inventory:
         if obj.equipment and obj.equipment.slot == slot and obj.equipment.is_equipped:
             return obj.equipment
     return None
 
-def get_all_equipped(obj):
+def get_all_equipped(creature):
     """Returns a list of equipped items."""
-    if obj == player:
+    if creature.name is 'player':
         equipped_list = []
-        for item in inventory:
+        for item in creature.inventory:
             if item.equipment and item.equipment.is_equipped:
                 equipped_list.append(item.equipment)
         return equipped_list
     else:
         #other objects such as NPCs do not currently have equipment. If they do, change this.
+        # Also I'm pretty sure it should be "return None" rather than "return []"
         return []
