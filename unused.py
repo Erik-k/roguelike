@@ -1,5 +1,18 @@
 # This is a file for the functions I'm currently not using
 
+#====================
+# IN PROGRESS
+#====================
+
+
+def blink_all_designations(gamemap_instance):
+    """This blinks the designated construction zones (and other zones) periodically."""
+    for y in range(MAP_HEIGHT): 
+        for x in range(MAP_WIDTH):
+            if gamemap_instance.level[x][y].designated:
+                
+# -----------------------------------------------------------------------------
+
 def make_underground_map():
     """Creates rectangular rooms and connects them with straight hallways. The default map is filled."""
     global map, objects, stairs

@@ -8,7 +8,7 @@ from time import sleep
 from random import choice
 from constants import *
 
-from utility_methods import switch, is_blocked
+from utility_methods import switch, is_blocked, is_mapedge
 
 PLAYER_SPEED = 1
 DEFAULT_SPEED = 8
@@ -78,11 +78,18 @@ class GamePiece(object):
         self.scifi_name = None
         self.spoken = False
 
-    def move(self, mymap, dx, dy):
+    def move(self, gamemap, dx, dy):
         """Move to a coordinate if it isn't blocked."""
-        if not is_blocked(mymap, mymap.objects, self.x + dx, self.y + dy):
-            self.x += dx
-            self.y += dy
+
+        if self.name is 'player':
+            # If the player is a cursor then it can move through anything. Remove this for adventure mode.
+            if not is_mapedge(gamemap, self.x + dx, self.y + dy):
+                self.x += dx
+                self.y += dy
+        else:
+            if not is_blocked(gamemap, gamemap.objects, self.x + dx, self.y + dy):
+                self.x += dx
+                self.y += dy
 
         # Whenever the thing moves, it has to wait:
         self.wait = self.speed
@@ -246,8 +253,8 @@ class Item(object):
         #add to the map and remove from the player's inventory. Place it at the player's coordinates
         objects.append(self.owner)
         creature.inventory.remove(self.owner)
-        self.owner.x = player.x
-        self.owner.y = player.y
+        self.owner.x = creature.x
+        self.owner.y = creature.y
         message('You dropped a ' + self.owner.name + '.', libtcod.yellow)
             
 class Equipment(object):

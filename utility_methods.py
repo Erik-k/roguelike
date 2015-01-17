@@ -49,6 +49,13 @@ def is_blocked(mymap, objects, x,y):
     
     return False
 
+def is_mapedge(mymap, x, y):
+    """Returns True if (x, y) is a mapedge tile, False otherwise."""
+    if mymap[x][y].mapedge:
+        return True
+    else:
+        return False
+
 def choose_random_unblocked_spot(mymap):
     """
     This function picks a random point on the map which is not blocked. It returns the x, y coordinates for

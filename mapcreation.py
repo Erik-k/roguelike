@@ -14,15 +14,17 @@ from ai import BasicNPC, BasicExplorer, player_death, NPC_death, namegenerator
 
 class GameMap(object):
     """
-    Maps have qualities which apply to an entire play area. 
-    Maps have a unique id which is a sequential integer starting from 0, a location specifying 
+    This class holds all the information needed for processing a map, as well as the map itself.
+    GameMaps have qualities which apply to an entire play area. 
+    GameMaps have a unique id which is a sequential integer starting from 0, a location specifying 
     whether the map is predominately on the surface or inside the planet. 
-    Maps contain a list of all objects within them. If an object moves between maps, such as the player
+    GameMaps contain a list of all objects within them. If an object moves between maps, such as the player
     going to a different area, the origin map needs to hand the player object to the destination map.
     """
-    def __init__(self, id_number, level, location='surface', objects=None):
+    def __init__(self, id_number, level, fov_map, location='surface', objects=None):
         self.id_number = id_number
         self.level = level # this is the actual map.
+        self.fov_map = fov_map
         self.location = location
         
         if objects is None:
@@ -48,6 +50,12 @@ class Tile(object):
         self.outdoors = outdoors
         self.mapedge = False
         self.explored = False
+
+        # A tile can be designated for construction of some sort. If it is designated, it will blink.
+        # designation_type determines more details like how it blinks or what it needs to be made into.
+        self.designated = False
+        self.designation_type = None
+        self.designation_char = None
 
 class Rect(object):
     """A rectangle, with a center."""
@@ -141,6 +149,8 @@ def make_surface_map(player=None):
     Uses a 2D noise generator. The map has an impenetrable border.
     """
     objects_for_this_map = []
+    new_objects = []
+    more_objects = []
 
     if player is None:
         #Creating the object representing the player:
@@ -251,13 +261,19 @@ def make_surface_map(player=None):
             newmap[doorx][doory].fore = libtcod.white
             newmap[doorx][doory].back = libtcod.grey
 
-        place_objects(newmap, place) #add some contents to this room
+        #more_objects = place_objects(newmap, place) #add some contents to this room
+        #if more_objects is not None:
+            #for item in more_objects:
+                #new_objects.append(item)
 
     # Scatter debris around the map to add flavor:
     place_junk(newmap)
 
     # Choose a spot for the player to start
     player.x, player.y = choose_random_unblocked_spot(newmap)
+
+    for item in new_objects:
+        objects_for_this_map.append(item)
 
     return newmap, objects_for_this_map
 
@@ -309,6 +325,7 @@ def place_objects(mymap, room):
                 NPC = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
                 NPC.scifi_name = namegenerator()
+                print 'Created robot named ' + str(NPC.scifi_name)
             elif choice == 'security bot':
                 #Create a major enemy
                 fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=NPC_death)
@@ -316,14 +333,14 @@ def place_objects(mymap, room):
                 NPC = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
                 NPC.scifi_name = namegenerator()
-
+                print 'Created security bot named ' + str(NPC.scifi_name)
             else:
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=NPC_death)
                 ai_component = BasicExplorer(mymap)
                 NPC = GamePiece(x, y, '@', 'explorer', libtcod.green, blocks=True,
                     fighter=fighter_component, ai=ai_component)
                 NPC.ai.create_path()
-
+                print 'Created Explorer'
             
             objects.append(NPC)
             
@@ -358,6 +375,10 @@ def place_objects(mymap, room):
             objects.append(item)
 
             #item.send_to_back(objects) #make items appear below other objects
+            print 'objects is ' + str(len(objects)) + ' long.'
+            for item in objects:
+                print 'Returning objects in place_objects: ' + str(item)
+            return objects
 
 
 def place_junk(mymap):

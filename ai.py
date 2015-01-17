@@ -4,6 +4,7 @@
 
 import libtcodpy as libtcod
 from random import choice
+from math import sqrt
 from constants import *
 
 from utility_methods import MAP_WIDTH, MAP_HEIGHT, choose_random_unblocked_spot
@@ -96,7 +97,7 @@ class BasicExplorer(object):
                 #') to (' + str(pathx) + ', ' + str(pathy) +').'
             dx = pathx - self.owner.x
             dy = pathy - self.owner.y
-            distance = math.sqrt(dx ** 2 + dy ** 2)
+            distance = sqrt(dx ** 2 + dy ** 2)
      
             #normalize it to length 1 (preserving direction), then round it and
             #convert to integer so the movement is restricted to the map grid

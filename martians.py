@@ -9,7 +9,6 @@
 
 # import general python and libtcod stuff:
 import libtcodpy as libtcod
-import math
 import textwrap
 import shelve
 from time import sleep
@@ -35,7 +34,7 @@ def target_tile(mymap, max_range=None):
         
         (x, y) = (mouse.cx, mouse.cy)
         #accept the target if the player clicked in FOV, and in case a range is specified, if it's in that range
-        if (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map, x, y) and 
+        if (mouse.lbutton_pressed and libtcod.map_is_in_fov(mymap.fov_map, x, y) and 
             (max_range is None or player.distance(x, y) <= max_range) ):
             return (x, y)
         # Give the player ways to cancel, if they right click or press escape:
@@ -45,21 +44,31 @@ def target_tile(mymap, max_range=None):
 
 def next_level(list_of_maps, map_number):
 
+    # Find the player in this map's list of objects:
+    player_index = 0
+    for obj in list_of_maps[map_number].objects:
+        if obj.name == 'player':
+            break
+        else:
+            player_index += 1
+
+    player = list_of_maps[map_number].objects[player_index]
+
     message('You rest for a moment and recover your strength.', libtcod.light_violet)
     player.fighter.heal(player.fighter.max_hp / 2)
 
     message('You move onward to the next area...', libtcod.red)
     map_number += 1
     nextmap, objects_for_this_map = make_surface_map() # a fresh level!
+    new_fov_map = initialize_fov(nextmap)
 
     # Append this new level to the list_of_maps, and then append all the objects to that GameMap's
     # object list.
-    list_of_maps.append(GameMap(map_number, nextmap, 'surface'))
+    list_of_maps.append(GameMap(map_number, nextmap, new_fov_map, 'surface'))
     for item in objects_for_this_map:
                 list_of_maps[map_number].objects.append(item)
 
     print 'Inside next level, map number is: ' + str(map_number)
-    initialize_fov(nextmap)
 
 
 def draw_things(list_of_maps, map_number):
@@ -76,7 +85,7 @@ def draw_things(list_of_maps, map_number):
         # Rendering the screen first closes the menu and returns to the map, ready to place something
         libtcod.console_flush()
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)        
-        render_all(list_of_maps, map_number)
+        render_all(list_of_maps)
 
         xlist = []
         ylist = []
@@ -270,7 +279,7 @@ def render_bar(x, y, total_width, name, value, maximum, bar_color, back_color):
     libtcod.console_print_ex(panel, x + total_width / 2, y, libtcod.BKGND_NONE, libtcod.CENTER,
         name + ': ' + str(value) + '/' + str(maximum))
         
-def render_all(map_to_be_rendered, fov_map):
+def render_all(map_to_be_rendered):
     """Draw everything on to the screen. This is where all the consoles get blit'd."""
 
     # Find the player in this map's list of objects:
@@ -282,6 +291,8 @@ def render_all(map_to_be_rendered, fov_map):
             player_index += 1
 
     player = map_to_be_rendered.objects[player_index]
+
+    fov_map = map_to_be_rendered.fov_map
 
     #if fov_recompute:
     libtcod.map_compute_fov(fov_map, player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
@@ -338,7 +349,7 @@ def render_all(map_to_be_rendered, fov_map):
          str(map_to_be_rendered.location))
     #display names of objects under the mouse
     libtcod.console_set_default_foreground(panel, libtcod.light_gray)
-    libtcod.console_print_ex(panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse(map_to_be_rendered, fov_map))
+    libtcod.console_print_ex(panel, 1, 0, libtcod.BKGND_NONE, libtcod.LEFT, get_names_under_mouse(map_to_be_rendered))
     #blit the contents of "panel" to the root console
     libtcod.console_blit(panel, 0, 0, SCREEN_WIDTH, PANEL_HEIGHT, 0, 0, PANEL_Y)
     
@@ -381,33 +392,34 @@ def player_move_or_attack(mymap, dx, dy):
         #fov_recompute = True
         #return fov_recompute
 
-def get_names_under_mouse(mymap, fov_map):
+def get_names_under_mouse(mymap):
     global mouse
     
     #return a string with the names of all objects under the mouse
     (x, y) = (mouse.cx, mouse.cy)    
     #print 'Getting names under mouse at: (' + str(x) + ', ' + str(y) + ').'
 
-    # check for valid mouse region to prevent buffer overflow if the mouse goes into the GUI
-    if y >= MAP_HEIGHT-1:
-        return
+    fov_map = mymap.fov_map
 
     #create a list with the names of all objects under the mouse AND in FOV 
     names = [obj.name for obj in mymap.objects if obj.x == x and obj.y == y and libtcod.map_is_in_fov(fov_map, obj.x, obj.y)]
     
     # If there is junk placed, explain what it is
-    if mymap[x][y].char is not ' ':
-        for case in switch(mymap[x][y].char):
-            if case('.'): 
-                names.append('a stone')
-                break
-            if case(7): 
-                names.append('a boulder')
-                break
-            if case(176): 
-                names.append('gravel')
-                break
-            if case(): break
+    try:
+        if mymap[x][y].char is not ' ':
+            for case in switch(mymap[x][y].char):
+                if case('.'): 
+                    names.append('a stone')
+                    break
+                if case(7): 
+                    names.append('a boulder')
+                    break
+                if case(176): 
+                    names.append('gravel')
+                    break
+                if case(): break
+    except IndexError:
+        pass # This happens if the mouse goes into the GUI area.
 
     names = ', '.join(names) #concatenates the names into a big string, separated by a comma
     return names.capitalize() 
@@ -480,7 +492,7 @@ def handle_keys(list_of_maps, map_number):
                 #pick up an item
                 for object in mymap.objects: #Is there an item in the player's tile?
                     if object.x == player.x and object.y == player.y and object.item:
-                        object.item.pick_up()
+                        object.item.pick_up(player)
                         break
             
             if key_char == 'i':
@@ -493,7 +505,7 @@ def handle_keys(list_of_maps, map_number):
                 #show the inventory and drop the selected item
                 chosen_item = inventory_menu('Press the key next to an item to drop it, or any other key to cancel.\n', player)
                 if chosen_item is not None:
-                    chosen_item.drop()
+                    chosen_item.drop(player)
 
             if key_char == '>':
                 #go to next map
@@ -549,7 +561,7 @@ def handle_keys(list_of_maps, map_number):
             if key_char == 'q':
                 # Display a menu from which the player can choose something to place on the map using the mouse.
                 build_menu(mymap, 'Choose something to place with the mouse:\n')
-                    
+                
             return 'didnt_take_turn'
          
 #############################################
@@ -564,14 +576,14 @@ def new_game():
 
     #generate map, but at this point it's not drawn to the screen    
     newmap, objects_for_this_map = make_surface_map() # a fresh level!
+    new_fov_map = initialize_fov(newmap)
 
     # Append this new level to the list_of_maps, and then append all the objects to that GameMap's
     # object list.
-    list_of_maps.append( GameMap(map_number, newmap, 'surface') )
+    list_of_maps.append( GameMap(map_number, newmap, new_fov_map, 'surface') )
     for item in objects_for_this_map:
                 list_of_maps[map_number].objects.append(item)
 
-    fov_map = initialize_fov(newmap)
 
     game_state = 'playing'
     # Inventory assignment used to be here ("inventory = []") but now the list gets created on the line above where we create
@@ -582,7 +594,7 @@ def new_game():
 
     message('Welcome to Mars! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.', libtcod.red)
 
-    return list_of_maps, map_number, fov_map
+    return list_of_maps, map_number
 
 def initialize_fov(mymap):
     """This is needed to allow field of view stuff."""
@@ -596,12 +608,7 @@ def initialize_fov(mymap):
     libtcod.console_clear(con)
     return fov_map
 
-def initialize_pathmap():
-    """Allocate a path using the FOV map."""
-    global path, fov_map
-    path = libtcod.path_new_using_map(fov_map)
-
-def play_game(list_of_maps, map_number, fov_map):
+def play_game(list_of_maps, map_number):
     """This function contains the while loop."""
     #====================
     # THE MAIN LOOP
@@ -609,19 +616,21 @@ def play_game(list_of_maps, map_number, fov_map):
     global key, mouse
     
     player_action = None
-    
+
+    currently_building = False
+
     mouse = libtcod.Mouse()
     key = libtcod.Key()
     while not libtcod.console_is_window_closed():
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
-        mymap = list_of_maps[map_number]
-        render_all(mymap, fov_map) #render the screen
+        gamemap_instance = list_of_maps[map_number]
+        render_all(gamemap_instance) #render the screen
         libtcod.console_flush()
 
         #check_level_up()
         
         #erase all objects at their old locations, before they move
-        for object in mymap.objects:
+        for object in gamemap_instance.objects:
             object.clear(con)
     
         #handle keys and exit game if needed
@@ -636,15 +645,88 @@ def play_game(list_of_maps, map_number, fov_map):
         if player_action == 'previous_map':
             map_number -= 1
 
+# -----------------------------------------------------------------------------
+        # Designating Buildings:
+
+        if mouse.lbutton and not currently_building:
+            startx, starty = mouse.cx, mouse.cy # The position of the mouse in cells at the time the lbutton is PRESSED
+            currently_building = True
+            print 'Starting a construction area at (' + str(startx) + ', ' + str(starty) +')'
+            
+
+        if not mouse.lbutton and currently_building is True:    
+            currently_building = False
+            newx, newy = mouse.cx, mouse.cy # The position of the mouse in cells at the time the lbutton is RELEASED
+
+            # Check for out-of-bounds:
+            if newx >= MAP_WIDTH: 
+                newx = MAP_WIDTH - 1
+            if newy >= MAP_HEIGHT:
+                newy = MAP_HEIGHT -1
+
+            if newx < 0:
+                newx = 0
+            if newy < 0:
+                newy = 0
+
+            if (newx - startx) >= 0:
+                dx = (newx - startx) + 1
+                zone_character = '+' * dx
+            else:
+                dx = (newx - startx) - 1
+                zone_character = '+' * abs(dx)
+
+
+            if (newy - starty) >= 0:
+                dy = (newy - starty) + 1
+            else:
+                dy = (newy - starty)
+
+ 
+            construction_area = libtcod.console_new(startx, starty)
+
+            for x in range(dx):
+                for y in range(dy):
+                    try:
+                        gamemap_instance.level[startx + x][starty + y].designated = True
+                        gamemap_instance.level[startx + x][starty + y].designation_type = 'clearing'
+                        gamemap_instance.level[startx + x][starty + y].designation_char = '+'
+                    except IndexError:
+                        pass
+
+
+            print 'Trying to blit the console of the construction_area (' + str(dx) +', ' + str(dy) + ') wide.'
+
+            if dy > 0:
+                for row in range(dy):
+                    if dx < 0:
+                        libtcod.console_print_ex(0, newx, starty + row, libtcod.BKGND_NONE, libtcod.LEFT, zone_character)
+                    else:
+                        libtcod.console_print_ex(0, startx, starty + row, libtcod.BKGND_NONE, libtcod.LEFT, zone_character)
+            else:
+                for row in range(dy, 1):
+                    if dx < 0:
+                        libtcod.console_print_ex(0, newx, starty + row, libtcod.BKGND_NONE, libtcod.LEFT, zone_character)
+                    else:
+                        libtcod.console_print_ex(0, startx, starty + row, libtcod.BKGND_NONE, libtcod.LEFT, zone_character)
+
+            libtcod.console_flush()
+# -----------------------------------------------------------------------------
+
+        #blink_all_designations(gamemap_instance)
+
         #let NPCs take their turn
         if game_state == 'playing': #and player_action != 'didnt_take_turn': #let NPCs take their turn
-            for object in mymap.objects:
+            for object in gamemap_instance.objects:
                 if object.ai:
                     if object.wait > 0: # don't take a turn yet if still waiting
                         object.wait -= 1
                     else:
-                        object.ai.take_turn(fov_map)
+                        object.ai.take_turn(gamemap_instance.fov_map)
                     
+
+
+
 def msgbox(text, width=50):
     """
     Use our menu() function as a sort of message box. Everything counts as the header, with no body,
@@ -671,8 +753,8 @@ def main_menu():
         #show options and wait for the player's choice
         choice = menu('', ['New Game', 'Continue', 'Quit'], 24)
         if choice == 0: #new game
-            list_of_maps, map_number, fov_map = new_game()
-            play_game(list_of_maps, map_number, fov_map)
+            list_of_maps, map_number = new_game()
+            play_game(list_of_maps, map_number)
         elif choice == 1: #load game
             try:
                 load_game()
@@ -722,7 +804,7 @@ def load_game():
 #==============================================================================
 libtcod.console_set_custom_font('libtcod-1.5.1/data/fonts/terminal16x16_gs_ro.png', 
     libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_ASCII_INROW)
-libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Many Martians', False)
+libtcod.console_init_root(SCREEN_WIDTH, SCREEN_HEIGHT, 'Many Martians!', False)
 
 # off screen console "con"
 con = libtcod.console_new(MAP_WIDTH, MAP_HEIGHT)
