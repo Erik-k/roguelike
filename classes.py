@@ -8,7 +8,7 @@ from time import sleep
 from random import choice
 from constants import *
 
-from utility_methods import switch, is_blocked, is_mapedge
+from utility_methods import switch, is_blocked, is_mapedge, message
 
 PLAYER_SPEED = 1
 DEFAULT_SPEED = 8
@@ -77,50 +77,16 @@ class GamePiece(object):
         # For creatures with names
         self.scifi_name = None
         self.spoken = False
-
-    def move(self, gamemap, dx, dy):
-        """Move to a coordinate if it isn't blocked."""
-
-        if self.name is 'player':
-            # If the player is a cursor then it can move through anything. Remove this for adventure mode.
-            if not is_mapedge(gamemap, self.x + dx, self.y + dy):
-                self.x += dx
-                self.y += dy
-        else:
-            if not is_blocked(gamemap, gamemap.objects, self.x + dx, self.y + dy):
-                self.x += dx
-                self.y += dy
-
-        # Whenever the thing moves, it has to wait:
-        self.wait = self.speed
-            
-    def move_towards(self, mymap, target_x, target_y):
-        """
-        Move towards a target_x, target_y coordinate. This method computes the A* path and uses GamePiece.move()
-        to actually implement the movement.
-        """
-        initialize_pathmap()
-        libtcod.path_compute(path, self.x, self.y, target_x, target_y)
-        pathx, pathy = libtcod.path_walk(path, True)
-        dx = pathx - self.x
-        dy = pathy - self.y
-        distance = math.sqrt(dx ** 2 + dy ** 2)
- 
-        #normalize it to length 1 (preserving direction), then round it and
-        #convert to integer so the movement is restricted to the map grid
-        dx = int(round(dx / distance))
-        dy = int(round(dy / distance))
-        self.move(mymap, dx, dy)
         
     def distance_to(self, other):
         """Return the distance to another object from this object."""
         dx = other.x - self.x
         dy = other.y - self.y
-        return math.sqrt(dx ** 2 + dy ** 2)        
+        return sqrt(dx ** 2 + dy ** 2)        
         
     def distance(self, x, y):
         """Returns the distance between an object and a tile."""
-        return math.sqrt( (x - self.x)**2 + (y - self.y)**2 )
+        return sqrt( (x - self.x)**2 + (y - self.y)**2 )
         
     def draw(self, mymap, fov_map, con):
         """Set the color and then draw the object at its position."""
@@ -131,17 +97,7 @@ class GamePiece(object):
     def clear(self, con):
         """Erase the character that represents this object."""
         libtcod.console_put_char(con, self.x, self.y, ' ', libtcod.BKGND_NONE)
-        
-    def send_to_back(self, objectlist):
-        """
-        Make this thing get drawn first, so that everything else appears above it if on the same tile
-        otherwise NPC corpses get drawn on top of NPCs sometimes.
-        """
-        
-        objectlist.remove(self)
-        objectlist.insert(0, self)
-        return objectlist
-        
+                
 class Fighter(object):
     """Combat related properties and methods (NPC, player, NPC)."""
     def __init__(
@@ -191,8 +147,8 @@ class Fighter(object):
                 function = self.death_function
                 if function is not None:
                     function(self.owner)
-                if self.owner != player:
-                    player.fighter.xp += self.xp  #give xp to the player
+                #if self.owner.name != 'player':
+                #    player.fighter.xp += self.xp  #give xp to the player
             
     def attack(self, target):
         damage = self.power - target.fighter.defense

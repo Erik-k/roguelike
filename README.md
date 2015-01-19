@@ -14,8 +14,12 @@ scaled up by libtcod's sub-cell font magic. I haven't settled on a final window 
 
 To-Do list:
 -----------
-* How can I stop it from crashing if the mouse goes into the GUI area?
-* I think the fov_map should be a component of a GameMap object.
+* Move the building designation logic into its own function. I wasn't able to get that to work for now.
+* There are a lot of functions inside of the GamePiece class which should be broken out and moved to stand alone, so
+that the object list doesn't have to be taken from GameMap and passed in and out. Especially since GamePieces can't know
+what list they are in without recursion weirdness.
+* in move(), should the object.wait = object.speed be moved inside the if-else loop? This would prevent having to wait
+so long after a failed attempt to move.
 
 Future Goals:
 -------------

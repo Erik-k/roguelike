@@ -97,3 +97,19 @@ def check_level_up():
             player.fighter.base_power += 1
         elif choice == 2:
             player.fighter.base_defense += 1
+
+            
+class ConfusedNPC(object):
+    """AI for a confused NPC. Must take previous AI as argument so it can revert to it after a while."""
+    def __init__(self, old_ai, num_turns=CONFUSE_NUM_TURNS):
+        self.old_ai = old_ai
+        self.num_turns = num_turns
+
+    def take_turn(self, fov_map):
+        if self.num_turns > 0:
+            self.owner.move(libtcod.random_get_int(0, -1, 1), libtcod.random_get_int(0, -1, 1))            
+            self.num_turns -= 1
+        else:
+            self.owner.ai = self.old_ai
+            message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)      
+

@@ -1,25 +1,22 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-#============================================================= 
-# To use special characters from ASCII Code Page 437 (the terminal 16x16 tileset) pass the decimal value 
-# for each of these characters to libtcod.console_put_char_ex as char.
-# https://en.wikipedia.org/wiki/Code_page_437
-#============================================================= 
-
 # import general python and libtcod stuff:
 import libtcodpy as libtcod
-import textwrap
 import shelve
 from time import sleep
-from constants import *
 
 # Now import stuff from the game's other files:
+from constants import *
 from classes import switch, GamePiece, Fighter, Item, Equipment
+
 from utility_methods import is_blocked, choose_random_unblocked_spot, random_choice_index, random_choice, \
-                             target_NPC
+                             target_NPC, find_player_in_list, message, move, move_towards, send_to_back
+
 from mapcreation import MAP_WIDTH, MAP_HEIGHT, GameMap, Tile, Rect, create_room, create_building, create_h_tunnel, \
-                            create_v_tunnel, make_surface_map, place_objects, place_junk
+                            create_v_tunnel, make_surface_map, place_objects, place_junk, make_bare_surface_map, \
+                            land_astronauts
+
 from ai import BasicNPC, BasicExplorer, player_death, NPC_death
 
 
@@ -44,31 +41,22 @@ def target_tile(mymap, max_range=None):
 
 def next_level(list_of_maps, map_number):
 
-    # Find the player in this map's list of objects:
-    player_index = 0
-    for obj in list_of_maps[map_number].objects:
-        if obj.name == 'player':
-            break
-        else:
-            player_index += 1
-
-    player = list_of_maps[map_number].objects[player_index]
-
+    player = find_player_in_list(list_of_maps[map_number].objects)
+    
     message('You rest for a moment and recover your strength.', libtcod.light_violet)
     player.fighter.heal(player.fighter.max_hp / 2)
 
     message('You move onward to the next area...', libtcod.red)
     map_number += 1
     nextmap, objects_for_this_map = make_surface_map() # a fresh level!
-    new_fov_map = initialize_fov(nextmap)
 
     # Append this new level to the list_of_maps, and then append all the objects to that GameMap's
     # object list.
-    list_of_maps.append(GameMap(map_number, nextmap, new_fov_map, 'surface'))
+    list_of_maps.append(GameMap(map_number, nextmap, 'surface'))
     for item in objects_for_this_map:
                 list_of_maps[map_number].objects.append(item)
 
-    print 'Inside next level, map number is: ' + str(map_number)
+
 
 
 def draw_things(list_of_maps, map_number):
@@ -114,6 +102,7 @@ def build_menu(mymap, header):
     2) Stuff can be placed inside walls
     3) Menu debouncing issues - the damn thing is hard to keep open. And if I click through really
         fast it can hang a bit.
+    4) Are these mymaps (arrays of Tiles) or gamemap instances? I can't tell!
     """
 
     options = [
@@ -173,18 +162,6 @@ def check_for_junction(mymap, pipex, pipey):
 #==============================================================================
 # Graphics       
 #==============================================================================
-
-def message(new_msg, color=libtcod.white):     
-    """
-    Fills the game_msgs list with nicely word-wrapped tuples of (line, color). game_msgs is later displayed
-    in the render_all method.
-    """ 
-    new_msg_lines = textwrap.wrap(new_msg, MSG_WIDTH)
-    for line in new_msg_lines:
-        #if the buffer is full, remove the first line to make room for the new one
-        if len(game_msgs) == MSG_HEIGHT:
-            del game_msgs[0]
-        game_msgs.append( (line, color) )
             
 def menu(header, options, width):
     """
@@ -356,21 +333,13 @@ def render_all(map_to_be_rendered):
 #==============================================================================
 # Keyboard and Mouse management        
 #==============================================================================
-def player_move_or_attack(mymap, dx, dy):
+def player_move_or_attack(gamemap_instance, dx, dy):
     """
     This function determines whether the player moves into an empty space or interacts 
     with a creature or thing in that space (which means no movement).
     """
     
-    # Find the player in this map's list of objects:
-    player_index = 0
-    for obj in mymap.objects:
-        if obj.name == 'player':
-            break
-        else:
-            player_index += 1
-
-    player = mymap.objects[player_index]
+    player = find_player_in_list(gamemap_instance.objects)
 
 
     #the coordinates the player is moving to or attacking into
@@ -379,7 +348,7 @@ def player_move_or_attack(mymap, dx, dy):
     
     #Is there an attackable object there?
     target = None
-    for object in mymap.objects:
+    for object in gamemap_instance.objects:
         if object.fighter and object.x == x and object.y == y:
             target = object
             break #prevents attacking multiple overlapping things
@@ -387,8 +356,10 @@ def player_move_or_attack(mymap, dx, dy):
     #attack if target found, otherwise move
     if target is not None:
         player.fighter.attack(target)
+        if target.char is '%':
+            send_to_back(target, gamemap_instance.objects)
     else:
-        player.move(mymap, dx, dy)
+        move(gamemap_instance, player, dx, dy)
         #fov_recompute = True
         #return fov_recompute
 
@@ -424,31 +395,35 @@ def get_names_under_mouse(mymap):
     names = ', '.join(names) #concatenates the names into a big string, separated by a comma
     return names.capitalize() 
     
-def handle_keys(list_of_maps, map_number):
+def handle_keys(gamemap_instance):
     """Handles all keyboard input."""
     global key
 
-    mymap = list_of_maps[map_number] # mymap here IS a GameMap object
+    are_there_stairs = True
 
     # Find the player in this map's list of objects:
     player_index = 0
-    for obj in mymap.objects:
+    for obj in gamemap_instance.objects:
         if obj.name == 'player':
             break
         else:
             player_index += 1
 
-    player = mymap.objects[player_index]
+    player = gamemap_instance.objects[player_index]
 
     # Find the stairs in this map's list of objects:
     stair_index = 0
-    for obj in mymap.objects:
+    for obj in gamemap_instance.objects:
         if obj.name == 'stairs':
             break
         else:
             stair_index += 1
 
-    stairs = mymap.objects[stair_index]
+    if stair_index >= len(gamemap_instance.objects):
+        # No stairs on this map!
+        are_there_stairs = False
+    else:
+        stairs = gamemap_instance.objects[stair_index]
 
     # -----------------------------------------------------
     # Now check for all the key presses that we care about:
@@ -467,21 +442,21 @@ def handle_keys(list_of_maps, map_number):
             return
 
         if key.vk == libtcod.KEY_UP or key.vk == libtcod.KEY_KP8:
-            player_move_or_attack(mymap, 0, -1)
+            player_move_or_attack(gamemap_instance, 0, -1)
         elif key.vk == libtcod.KEY_DOWN or key.vk == libtcod.KEY_KP2:
-            player_move_or_attack(mymap, 0, 1)
+            player_move_or_attack(gamemap_instance, 0, 1)
         elif key.vk == libtcod.KEY_LEFT or key.vk == libtcod.KEY_KP4:
-            player_move_or_attack(mymap, -1, 0)
+            player_move_or_attack(gamemap_instance, -1, 0)
         elif key.vk == libtcod.KEY_RIGHT or key.vk == libtcod.KEY_KP6:
-            player_move_or_attack(mymap, 1, 0)
+            player_move_or_attack(gamemap_instance, 1, 0)
         elif key.vk == libtcod.KEY_HOME or key.vk == libtcod.KEY_KP7:
-            player_move_or_attack(mymap, -1, -1)
+            player_move_or_attack(gamemap_instance, -1, -1)
         elif key.vk == libtcod.KEY_PAGEUP or key.vk == libtcod.KEY_KP9:
-            player_move_or_attack(mymap, 1, -1)
+            player_move_or_attack(gamemap_instance, 1, -1)
         elif key.vk == libtcod.KEY_END or key.vk == libtcod.KEY_KP1:
-            player_move_or_attack(mymap, -1, 1)
+            player_move_or_attack(gamemap_instance, -1, 1)
         elif key.vk == libtcod.KEY_PAGEDOWN or key.vk == libtcod.KEY_KP3:
-            player_move_or_attack(mymap, 1, 1)
+            player_move_or_attack(gamemap_instance, 1, 1)
         elif key.vk == libtcod.KEY_KP5:
             pass  #do nothing ie wait for the NPC to come to you
             
@@ -490,7 +465,7 @@ def handle_keys(list_of_maps, map_number):
             key_char = chr(key.c)
             if key_char == 'g':
                 #pick up an item
-                for object in mymap.objects: #Is there an item in the player's tile?
+                for object in gamemap_instance.objects: #Is there an item in the player's tile?
                     if object.x == player.x and object.y == player.y and object.item:
                         object.item.pick_up(player)
                         break
@@ -507,7 +482,7 @@ def handle_keys(list_of_maps, map_number):
                 if chosen_item is not None:
                     chosen_item.drop(player)
 
-            if key_char == '>':
+            if key_char == '>' and are_there_stairs:
                 #go to next map
                 if stairs.x == player.x and stairs.y == player.y:
                     print 'Going down stairs. Map number is: ' + str(map_number)
@@ -515,7 +490,7 @@ def handle_keys(list_of_maps, map_number):
                     map_number += 1
                     return 'next_map'
 
-            if key_char == '<':
+            if key_char == '<' and are_there_stairs:
                 #go to previous map
                 if upstairs.x == player.x and stairs.y == player.y:
                     print 'Going up stairs. Map number is: ' + str(map_number)
@@ -552,7 +527,7 @@ def handle_keys(list_of_maps, map_number):
                 #Debugging - display whole map
                 for y in range(MAP_HEIGHT):
                     for x in range(MAP_WIDTH):
-                        mymap[x][y].explored = True
+                        gamemap_instance.level[x][y].explored = True
 
             if key_char == 'p':
                 #Debugging - give us the player's coordinates
@@ -560,8 +535,13 @@ def handle_keys(list_of_maps, map_number):
 
             if key_char == 'q':
                 # Display a menu from which the player can choose something to place on the map using the mouse.
-                build_menu(mymap, 'Choose something to place with the mouse:\n')
+                build_menu(gamemap_instance, 'Choose something to place with the mouse:\n')
                 
+            if key_char == 'L':
+                # Land some astronauts!!
+                land_astronauts(gamemap_instance)
+                gamemap_instance.initialize_fov()
+
             return 'didnt_take_turn'
          
 #############################################
@@ -575,14 +555,16 @@ def new_game():
     list_of_maps = []
 
     #generate map, but at this point it's not drawn to the screen    
-    newmap, objects_for_this_map = make_surface_map() # a fresh level!
-    new_fov_map = initialize_fov(newmap)
+    newmap, objects_for_this_map = make_bare_surface_map() # a fresh level!
 
     # Append this new level to the list_of_maps, and then append all the objects to that GameMap's
     # object list.
-    list_of_maps.append( GameMap(map_number, newmap, new_fov_map, 'surface') )
+    list_of_maps.append( GameMap(map_number, newmap, 'surface') )
     for item in objects_for_this_map:
                 list_of_maps[map_number].objects.append(item)
+
+    list_of_maps[map_number].initialize_fov()
+    libtcod.console_clear(con)
 
 
     game_state = 'playing'
@@ -590,23 +572,11 @@ def new_game():
     # the player gamepiece. 
     
     #create the list of game messages and their colors.
-    game_msgs = []    
 
-    message('Welcome to Mars! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.', libtcod.red)
+    message('Welcome to Mars! This is a test of a roguelike game engine in Python and Libtcod. Push h for help.',\
+            libtcod.red)
 
     return list_of_maps, map_number
-
-def initialize_fov(mymap):
-    """This is needed to allow field of view stuff."""
-    
-    #create the FOV map according to the generated map
-    fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
-    for y in range(MAP_HEIGHT):
-        for x in range(MAP_WIDTH):
-            libtcod.map_set_properties(fov_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
-            
-    libtcod.console_clear(con)
-    return fov_map
 
 def play_game(list_of_maps, map_number):
     """This function contains the while loop."""
@@ -634,7 +604,7 @@ def play_game(list_of_maps, map_number):
             object.clear(con)
     
         #handle keys and exit game if needed
-        player_action = handle_keys(list_of_maps, map_number)
+        player_action = handle_keys(gamemap_instance)
         if player_action == 'exit':
             save_game()
             break
@@ -647,6 +617,8 @@ def play_game(list_of_maps, map_number):
 
 # -----------------------------------------------------------------------------
         # Designating Buildings:
+
+        # CHECK FOR MAP EDGE! :-0
 
         if mouse.lbutton and not currently_building:
             startx, starty = mouse.cx, mouse.cy # The position of the mouse in cells at the time the lbutton is PRESSED
@@ -722,7 +694,7 @@ def play_game(list_of_maps, map_number):
                     if object.wait > 0: # don't take a turn yet if still waiting
                         object.wait -= 1
                     else:
-                        object.ai.take_turn(gamemap_instance.fov_map)
+                        object.ai.take_turn(gamemap_instance)
                     
 
 
