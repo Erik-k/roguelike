@@ -271,9 +271,8 @@ def render_all(map_to_be_rendered):
 
     fov_map = map_to_be_rendered.fov_map
 
-    #if fov_recompute:
+    map_to_be_rendered.initialize_fov()
     libtcod.map_compute_fov(fov_map, player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO)
-        #fov_recompute = False
 
     # go through all tiles and set character, foreground and background according to FOV
     for y in range(MAP_HEIGHT):
@@ -541,6 +540,9 @@ def handle_keys(gamemap_instance):
                 # Land some astronauts!!
                 land_astronauts(gamemap_instance)
                 gamemap_instance.initialize_fov()
+                print 'Objects in this maps object list:'
+                for item in gamemap_instance.objects:
+                    print item.name + ' (' + str(item) + ')'
 
             return 'didnt_take_turn'
          

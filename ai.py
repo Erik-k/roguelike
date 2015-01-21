@@ -119,6 +119,8 @@ class BasicBuilder(object):
     def __init__(self):
 
         self.is_pathmap_created = False
+        self.work_target = (None, None)
+
 
     def initalize_pathmap(self, gamemap_instance):
         """Allocate a pathfinding algorithm using the map this object is in."""
@@ -131,13 +133,17 @@ class BasicBuilder(object):
         self.path_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
         for x in range(1, MAP_WIDTH):
             for y in range(1, MAP_HEIGHT):
-                libtcod.map_set_properties(self.path_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
+                libtcod.map_set_properties(self.path_map, x, y, not self.mymap[x][y].block_sight, not self.mymap[x][y].blocked)
     
     def pick_spot_to_work(self, gamemap_instance):
-        """Choose a Tile that needs work done."""
+        """
+        Choose a Tile that needs work done.
+        TODO: This should make a small 2D array of all eligible Tiles and then randomly select one, so they don't all
+        just start from the top right.
+        """
         for y in range(MAP_HEIGHT):
             for x in range(MAP_WIDTH):
-                if gamemap_instance.level[x][y].designated:
+                if gamemap_instance.level[x][y].designated and not gamemap_instance.level[x][y].being_worked_on:
                     return (x, y)
 
         return (None, None)
@@ -153,25 +159,36 @@ class BasicBuilder(object):
                 for y in range(1, MAP_HEIGHT):
                     libtcod.map_set_properties(self.path_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
             self.is_pathmap_created = True
+            print 'Builder created self.path_map'
 
         # now use the path map to create the path from the explorer's current position to another spot:
         self.path = libtcod.path_new_using_map(self.path_map)
         destinationx, destinationy = self.pick_spot_to_work(gamemap_instance)
-        self.work_target = (destinationx, destinationy)
 
         if destinationx is not None:
+            self.work_target = (destinationx, destinationy)
+            mymap[destinationx][destinationy].being_worked_on = True
+            print 'Builder chose a work target at ' + str(self.work_target[0]) +', ' + str(self.work_target[1]) + '.'
+
             libtcod.path_compute(self.path, self.owner.x, self.owner.y, destinationx, destinationy)
 
             originx, originy = libtcod.path_get_origin(self.path)
             destx, desty = libtcod.path_get_destination(self.path)
 
     def take_turn(self, gamemap_instance):
-
+        """
+        Current bugs:
+        1) It doesn't turn to gravel- why not?
+        2) The loop doesn't really go back around. They don't pick a new target, especially if they
+            get stuck while walking. They just give up after the first time they bump into something
+            dynamic. 
+        """
         fov_map = gamemap_instance.fov_map
         object_list = gamemap_instance.objects
         mymap = gamemap_instance.level
 
         if not self.is_pathmap_created:
+            print 'Builder needs to create_path'
             self.create_path(gamemap_instance)
 
         if not libtcod.path_is_empty(self.path):
@@ -188,23 +205,42 @@ class BasicBuilder(object):
             dy = int(round(dy / distance))
             move(gamemap_instance, self.owner, dx, dy)        
         elif self.work_target[0] is not None:
-            # We have arrived at a Tile that needs work done. Now begin work:
             (x, y) = self.work_target
-            for case in switch(mymap[x][y].designation_type):
-                if case('clearing'): 
-                    mymap[x][y].blocked = False
-                    mymap[x][y].block_sight = False
-                    mymap[x][y].char = GRAVEL
+            (my_x, my_y) = self.owner.x, self.owner.y
 
-                    # Then reset the tile:
-                    mymap[x][y].designated = False
-                    mymap[x][y].designation_type = None
-                    mymap[x][y].designation_char = None
+            # The following logic checks to see if they are standing in any of the 8 squares around
+            # the target Tile. I definitely had to draw a diagram for this.
+            if ((my_x+1 == x) and (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) \
+                or ((my_x == x) and (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) \
+                or ((my_x-1 == x) and (my_y+1 == y) or (my_y == y) or (my_y-1 == y)):
 
-                    break
-                if case(): break # default
+                # We have arrived at a Tile that needs work done. Now begin work:
+                print 'Builder is beginning work at ' + str(x) + ', ' + str(y) +'.'
+
+                for case in switch(mymap[x][y].designation_type):
+                    if case('clearing'): 
+                        mymap[x][y].blocked = False
+                        mymap[x][y].block_sight = False
+                        mymap[x][y].fore = color_ground
+                        mymap[x][y].back = color_ground
+                        mymap[x][y].char = GRAVEL
+
+                        # Then reset the tile:
+                        mymap[x][y].designated = False
+                        mymap[x][y].designation_type = None
+                        mymap[x][y].designation_char = None
+                        mymap[x][y].being_worked_on = False
+
+                        #gamemap_instance.initialize_fov()
+                        print 'Finished work, resetting work_target to None, None.'
+                        self.work_target = (None, None)
+                        break
+
+                    if case(): break # default
         else:
-            pass
+            self.pick_spot_to_work(gamemap_instance)
+            self.initalize_pathmap(gamemap_instance)
+            self.create_path(gamemap_instance)
 
 
 

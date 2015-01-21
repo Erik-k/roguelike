@@ -72,6 +72,7 @@ class Tile(object):
         self.designated = False
         self.designation_type = None
         self.designation_char = None
+        self.being_worked_on = False
 
 class Rect(object):
     """A rectangle, with a center."""
@@ -574,6 +575,7 @@ def land_astronauts(gamemap_instance):
             
             print 'Created BasicBuilder'
             objects_for_this_map.append(NPC)
+            print 'Appended ' + str(NPC) + ' to this map.'
 
 
 
@@ -602,8 +604,8 @@ def place_junk(mymap):
                         mymap[x][y].char = '.'
                         mymap[x][y].fore = libtcod.dark_sepia
                     elif choice == 'boulder':
-                        mymap[x][y].char = 7 # bullet point
+                        mymap[x][y].char = BOULDER # bullet point
                         mymap[x][y].fore = libtcod.dark_sepia
-                    else: # gravel
-                        mymap[x][y].char = 176
+                    else: 
+                        mymap[x][y].char = GRAVEL
                         mymap[x][y].fore = libtcod.dark_red
