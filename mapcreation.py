@@ -8,21 +8,23 @@ from constants import *
 from utility_methods import MAP_WIDTH, MAP_HEIGHT, switch, is_blocked, choose_random_unblocked_spot, \
                             random_choice_index, random_choice, cast_heal
 from classes import GamePiece, Fighter, Item, Equipment
-from ai import BasicNPC, BasicExplorer, player_death, NPC_death, namegenerator
+from ai import BasicNPC, BasicExplorer, BasicBuilder, player_death, NPC_death, namegenerator
 
 
 
 class GameMap(object):
     """
-    Maps have qualities which apply to an entire play area. 
-    Maps have a unique id which is a sequential integer starting from 0, a location specifying 
+    This class holds all the information needed for processing a map, as well as the map itself.
+    GameMaps have qualities which apply to an entire play area. 
+    GameMaps have a unique id which is a sequential integer starting from 0, a location specifying 
     whether the map is predominately on the surface or inside the planet. 
-    Maps contain a list of all objects within them. If an object moves between maps, such as the player
+    GameMaps contain a list of all objects within them. If an object moves between maps, such as the player
     going to a different area, the origin map needs to hand the player object to the destination map.
     """
     def __init__(self, id_number, level, location='surface', objects=None):
         self.id_number = id_number
         self.level = level # this is the actual map.
+        self.fov_map = None
         self.location = location
         
         if objects is None:
@@ -32,6 +34,17 @@ class GameMap(object):
 
     def __getitem__(self, index):
         return self.level[index]
+
+    def initialize_fov(self):
+        """This is needed to allow field of view stuff. It requires the GameMap instance to already have
+        a level (a Tile array)."""
+        
+        #create the FOV map according to the generated map
+        self.fov_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
+        for y in range(MAP_HEIGHT):
+            for x in range(MAP_WIDTH):
+                libtcod.map_set_properties(self.fov_map, x, y, not self.level[x][y].block_sight, not self.level[x][y].blocked)
+                
 
 class Tile(object):
     """
@@ -48,6 +61,18 @@ class Tile(object):
         self.outdoors = outdoors
         self.mapedge = False
         self.explored = False
+
+        # A tile can be designated for construction of some sort. If it is designated, it will blink.
+        # designation_type determines more details like how it blinks or what it needs to be made into.
+        # Valid designation_types are:
+        # 'clearing'        when it needs to have all blocking walls removed
+        # 'build wall'      to build the wall of a building
+        # 'clean floor'     to lay the floor of a building (designate it as indoors and remove debris)
+        # 'install airlock' to place a door 
+        self.designated = False
+        self.designation_type = None
+        self.designation_char = None
+        self.being_worked_on = False
 
 class Rect(object):
     """A rectangle, with a center."""
@@ -135,12 +160,86 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].blocked = False
         map[x][y].block_sight = False
 
+def make_bare_surface_map(player=None):
+    """
+    Creates a map which is open by default, and then filled with boulders, mesas and rocks.
+    Uses a 2D noise generator. The map has an impenetrable border.
+    """
+    objects_for_this_map = []
+
+    if player is None:
+        #Creating the object representing the player:
+        fighter_component = Fighter(hp=30, defense=2, power=5, xp=0, death_function=player_death) #creating the fighter aspect of the player
+        player = GamePiece(0, 0, 219, 'player', libtcod.white, blocks=False, fighter=fighter_component, speed=PLAYER_SPEED)
+        player.level = 1
+
+        objects_for_this_map.append(player)
+
+    else:
+        # This must not be a new game. We need to put the pre-existing player into the list and later give them an
+        # appropriate spot in the map to have spatial translation continuity.
+        objects_for_this_map.append(player)
+
+
+    noise2d = libtcod.noise_new(2) #create a 2D noise generator
+    libtcod.noise_set_type(noise2d, libtcod.NOISE_SIMPLEX) #tell it to use simplex noise for higher contrast
+
+    # Create the map with a default tile choice of empty unblocked squares.
+    newmap = [[ Tile(blocked=False, block_sight=False, char=' ', fore=color_ground, back=color_ground) 
+        for y in range(MAP_HEIGHT)] 
+            for x in range(MAP_WIDTH) ]
+
+    #Put a border around the map so the characters can't go off the edge of the world
+    for x in range(0, MAP_WIDTH):
+        newmap[x][0].blocked = True
+        newmap[x][0].block_sight = True
+        newmap[x][0].mapedge = True
+        newmap[x][0].fore = color_wall
+        newmap[x][0].back = color_wall
+        newmap[x][MAP_HEIGHT-1].blocked = True
+        newmap[x][MAP_HEIGHT-1].block_sight = True
+        newmap[x][MAP_HEIGHT-1].mapedge = True
+        newmap[x][MAP_HEIGHT-1].fore = color_wall
+        newmap[x][MAP_HEIGHT-1].back = color_wall
+    for y in range(0, MAP_HEIGHT):
+        newmap[0][y].blocked = True
+        newmap[0][y].block_sight = True
+        newmap[0][y].mapedge = True
+        newmap[0][y].fore = color_wall
+        newmap[0][y].back = color_wall
+        newmap[MAP_WIDTH-1][y].blocked = True
+        newmap[MAP_WIDTH-1][y].block_sight = True
+        newmap[MAP_WIDTH-1][y].mapedge = True
+        newmap[MAP_WIDTH-1][y].fore = color_wall
+        newmap[MAP_WIDTH-1][y].back = color_wall
+
+    # Create natural looking landscape
+    for x in range(1, MAP_WIDTH-1):
+        for y in range(1, MAP_HEIGHT-1):
+            if libtcod.noise_get_turbulence(noise2d, [x, y], 128.0, libtcod.NOISE_SIMPLEX) < 0.4:
+                #Turbulent simplex noise returns values between 0.0 and 1.0, with many values greater than 0.9.
+                newmap[x][y].blocked = True
+                newmap[x][y].block_sight = True
+                newmap[x][y].fore = color_wall
+                newmap[x][y].back = color_wall
+
+    # Scatter debris around the map to add flavor:
+    place_junk(newmap)
+
+    # Choose a spot for the player to start
+    player.x, player.y = choose_random_unblocked_spot(newmap)
+
+    return newmap, objects_for_this_map
+
+
 def make_surface_map(player=None):
     """
     Creates a map which is open by default, and then filled with boulders, mesas and buildings.
     Uses a 2D noise generator. The map has an impenetrable border.
     """
     objects_for_this_map = []
+    new_objects = []
+    more_objects = []
 
     if player is None:
         #Creating the object representing the player:
@@ -228,36 +327,42 @@ def make_surface_map(player=None):
     #                 choice = random_choice(door_chances)
         doorx, doory = place.middle_of_wall('left')
         if newmap[doorx][doory].blocked and not newmap[doorx][doory].mapedge: 
-            newmap[doorx][doory].char = 29
+            newmap[doorx][doory].char = LEFT_DOOR
             newmap[doorx][doory].blocked = False 
             newmap[doorx][doory].fore = libtcod.white
             newmap[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('top')
         if newmap[doorx][doory].blocked and not newmap[doorx][doory].mapedge:
-            newmap[doorx][doory].char = 18
+            newmap[doorx][doory].char = TOP_DOOR
             newmap[doorx][doory].blocked = False 
             newmap[doorx][doory].fore = libtcod.white
             newmap[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('right')
         if newmap[doorx][doory].blocked and not newmap[doorx][doory].mapedge: 
-            newmap[doorx][doory].char = 29
+            newmap[doorx][doory].char = RIGHT_DOOR
             newmap[doorx][doory].blocked = False 
             newmap[doorx][doory].fore = libtcod.white
             newmap[doorx][doory].back = libtcod.grey
         doorx, doory = place.middle_of_wall('bottom')
         if newmap[doorx][doory].blocked and not newmap[doorx][doory].mapedge: 
-            newmap[doorx][doory].char = 18
+            newmap[doorx][doory].char = BOTTOM_DOOR
             newmap[doorx][doory].blocked = False 
             newmap[doorx][doory].fore = libtcod.white
             newmap[doorx][doory].back = libtcod.grey
 
-        place_objects(newmap, place) #add some contents to this room
+        more_objects = place_objects(newmap, place) #add some contents to this room
+        if more_objects is not None:
+            for item in more_objects:
+                new_objects.append(item)
 
     # Scatter debris around the map to add flavor:
     place_junk(newmap)
 
     # Choose a spot for the player to start
     player.x, player.y = choose_random_unblocked_spot(newmap)
+
+    for item in new_objects:
+        objects_for_this_map.append(item)
 
     return newmap, objects_for_this_map
 
@@ -269,7 +374,7 @@ def place_objects(mymap, room):
 
     # max number of NPCs per room:
     #max_NPCs = from_difficulty_level( [ [2, 1], [3, 4], [5, 6] ] )
-    max_NPCs = 2
+    max_NPCs = 3
 
     #chance of each NPC
     NPC_chances = {} # so that we can build the dict below
@@ -305,25 +410,25 @@ def place_objects(mymap, room):
             if choice == 'robot': 
                 #Create an minor enemy
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=NPC_death)
-                ai_component = BasicNPC(mymap)
+                ai_component = BasicNPC()
                 NPC = GamePiece(x, y, 'r', 'robot', libtcod.desaturated_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
                 NPC.scifi_name = namegenerator()
+                print 'Created robot named ' + str(NPC.scifi_name)
             elif choice == 'security bot':
                 #Create a major enemy
                 fighter_component = Fighter(hp=16, defense=1, power=4, xp=100, death_function=NPC_death)
-                ai_component = BasicNPC(mymap)
+                ai_component = BasicNPC()
                 NPC = GamePiece(x, y, 'S', 'security bot', libtcod.darker_green, blocks=True,
                                  fighter=fighter_component, ai=ai_component)
                 NPC.scifi_name = namegenerator()
-
+                print 'Created security bot named ' + str(NPC.scifi_name)
             else:
                 fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=NPC_death)
-                ai_component = BasicExplorer(mymap)
+                ai_component = BasicExplorer()
                 NPC = GamePiece(x, y, '@', 'explorer', libtcod.green, blocks=True,
                     fighter=fighter_component, ai=ai_component)
-                NPC.ai.create_path()
-
+                print 'Created Explorer'
             
             objects.append(NPC)
             
@@ -358,6 +463,120 @@ def place_objects(mymap, room):
             objects.append(item)
 
             #item.send_to_back(objects) #make items appear below other objects
+            print 'objects is ' + str(len(objects)) + ' long.'
+            for item in objects:
+                print 'Returning objects in place_objects: ' + str(item)
+            return objects
+
+def land_astronauts(gamemap_instance):
+    """
+    This function places 9 astronauts on the map, in a lander. The lander lands anywhere and becomes
+    a permanent addition to the map.
+    """
+
+    landingx = libtcod.random_get_int(0, 7, MAP_WIDTH-7)
+    landingy = libtcod.random_get_int(0, 7, MAP_HEIGHT-7)
+
+    mymap = gamemap_instance.level
+    objects_for_this_map = gamemap_instance.objects
+
+    martian_lander = Rect(landingx-2, landingy-2, 4, 4)
+
+    # Make the walls
+    for x in range(landingx-2, landingx+3):
+        mymap[x][landingy-2].blocked = True
+        mymap[x][landingy-2].block_sight = True
+        mymap[x][landingy-2].char = ' '
+        mymap[x][landingy-2].fore = libtcod.darkest_grey
+        mymap[x][landingy-2].back = libtcod.darkest_grey
+        mymap[x][landingy-2].outdoors = False
+        mymap[x][landingy-2].explored = False
+        mymap[x][landingy-2].designated = False
+        mymap[x][landingy-2].designation_type = None
+        mymap[x][landingy-2].designation_char = None
+
+        mymap[x][landingy+2].blocked = True
+        mymap[x][landingy+2].block_sight = True
+        mymap[x][landingy+2].char = ' '
+        mymap[x][landingy+2].fore = libtcod.darkest_grey
+        mymap[x][landingy+2].back = libtcod.darkest_grey
+        mymap[x][landingy+2].outdoors = False
+        mymap[x][landingy+2].explored = False
+        mymap[x][landingy+2].designated = False
+        mymap[x][landingy+2].designation_type = None
+        mymap[x][landingy+2].designation_char = None
+
+    for y in range(landingy-2, landingy+3):
+        mymap[landingx-2][y].blocked = True
+        mymap[landingx-2][y].block_sight = True
+        mymap[landingx-2][y].char = ' '
+        mymap[landingx-2][y].fore = libtcod.darkest_grey
+        mymap[landingx-2][y].back = libtcod.darkest_grey
+        mymap[landingx-2][y].outdoors = False
+        mymap[landingx-2][y].explored = False
+        mymap[landingx-2][y].designated = False
+        mymap[landingx-2][y].designation_type = None
+        mymap[landingx-2][y].designation_char = None
+
+        mymap[landingx+2][y].blocked = True
+        mymap[landingx+2][y].block_sight = True
+        mymap[landingx+2][y].char = ' '
+        mymap[landingx+2][y].fore = libtcod.darkest_grey
+        mymap[landingx+2][y].back = libtcod.darkest_grey
+        mymap[landingx+2][y].outdoors = False
+        mymap[landingx+2][y].explored = False
+        mymap[landingx+2][y].designated = False
+        mymap[landingx+2][y].designation_type = None
+        mymap[landingx+2][y].designation_char = None
+
+    # Make the floor inside
+    for x in range(landingx-1, landingx+2):
+        for y in range(landingy-1, landingy+2):
+            mymap[x][y].blocked = False
+            mymap[x][y].block_sight = False
+            mymap[x][y].char = ' '
+            mymap[x][y].fore = libtcod.grey
+            mymap[x][y].back = libtcod.grey
+            mymap[x][y].outdoors = False
+            mymap[x][y].explored = False
+            mymap[x][y].designated = False
+            mymap[x][y].designation_type = None
+            mymap[x][y].designation_char = None
+
+    # Put airlocks in all four sides
+    doorx, doory = martian_lander.middle_of_wall('left')
+    mymap[doorx][doory].char = LEFT_DOOR
+    mymap[doorx][doory].blocked = False 
+    mymap[doorx][doory].fore = libtcod.white
+    mymap[doorx][doory].back = libtcod.grey
+    doorx, doory = martian_lander.middle_of_wall('top')
+    mymap[doorx][doory].char = TOP_DOOR
+    mymap[doorx][doory].blocked = False 
+    mymap[doorx][doory].fore = libtcod.white
+    mymap[doorx][doory].back = libtcod.grey
+    doorx, doory = martian_lander.middle_of_wall('right')
+    mymap[doorx][doory].char = RIGHT_DOOR
+    mymap[doorx][doory].blocked = False 
+    mymap[doorx][doory].fore = libtcod.white
+    mymap[doorx][doory].back = libtcod.grey
+    doorx, doory = martian_lander.middle_of_wall('bottom')
+    mymap[doorx][doory].char = BOTTOM_DOOR
+    mymap[doorx][doory].blocked = False 
+    mymap[doorx][doory].fore = libtcod.white
+    mymap[doorx][doory].back = libtcod.grey
+
+    # Place the astronauts inside:
+    for x in range(landingx-1, landingx+2):
+        for y in range(landingy-1, landingy+2):
+            fighter_component = Fighter(hp=10, defense=0, power=3, xp=35, death_function=NPC_death)
+            ai_component = BasicBuilder()
+            NPC = GamePiece(x, y, '@', 'civil engineer', libtcod.white, blocks=True,
+                            fighter=fighter_component, ai=ai_component)
+            
+            print 'Created BasicBuilder'
+            objects_for_this_map.append(NPC)
+            print 'Appended ' + str(NPC) + ' to this map.'
+
 
 
 def place_junk(mymap):
@@ -385,8 +604,8 @@ def place_junk(mymap):
                         mymap[x][y].char = '.'
                         mymap[x][y].fore = libtcod.dark_sepia
                     elif choice == 'boulder':
-                        mymap[x][y].char = 7 # bullet point
+                        mymap[x][y].char = BOULDER # bullet point
                         mymap[x][y].fore = libtcod.dark_sepia
-                    else: # gravel
-                        mymap[x][y].char = 176
+                    else: 
+                        mymap[x][y].char = GRAVEL
                         mymap[x][y].fore = libtcod.dark_red

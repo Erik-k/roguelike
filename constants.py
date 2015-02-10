@@ -2,6 +2,12 @@
 # many of the modules, and so I've placed them all here so they can
 # be safely inherited with a bulk "from constants import * "
 
+#============================================================= 
+# To use special characters from ASCII Code Page 437 (the terminal 16x16 tileset) pass the decimal value 
+# for each of these characters to libtcod.console_put_char_ex as char.
+# https://en.wikipedia.org/wiki/Code_page_437
+#============================================================= 
+
 import libtcodpy as libtcod
 
 #actual size of the window
@@ -43,6 +49,8 @@ CONFUSE_RANGE = 8
 FIREBALL_RADIUS = 3
 FIREBALL_DAMAGE = 12
 
+ASTRONAUTS_IN_LANDER = 9
+
 LIMIT_FPS = 20  #20 frames-per-second maximum
 PLAYER_SPEED = 1
 DEFAULT_SPEED = 8
@@ -57,3 +65,14 @@ TORCH_RADIUS = 10
 color_wall = libtcod.dark_red
 color_ground = libtcod.flame
 color_building = libtcod.darker_red
+
+# ASCII Code Page 437 characters:
+GRAVEL = 176
+BOULDER = 7
+LEFT_DOOR = 29
+RIGHT_DOOR = 29
+TOP_DOOR = 18
+BOTTOM_DOOR = 18
+
+# Globals
+game_msgs = []
