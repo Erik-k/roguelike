@@ -14,8 +14,13 @@ scaled up by libtcod's sub-cell font magic. I haven't settled on a final window 
 
 To-Do list:
 -----------
-* How can I stop it from crashing if the mouse goes into the GUI area?
-* I think the fov_map should be a component of a GameMap object.
+* Builders just stand there after getting stuck once or twice. Make them more aggressive in recomputing and choosing
+new paths.
+* Its still possible to remove stuff by designating it and the builders just magically make it disappear from across 
+the map. 
+* Move the building designation logic into its own function. I wasn't able to get that to work for now.
+* in move(), should the object.wait = object.speed be moved inside the if-else loop? This would prevent having to wait
+so long after a failed attempt to move.
 
 Future Goals:
 -------------
