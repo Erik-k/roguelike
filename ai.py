@@ -116,13 +116,14 @@ class BasicBuilder(object):
     
     def pick_spot_to_work(self, gamemap_instance):
         """
-        Choose a Tile that needs work done.
+        Choose a Tile that needs work done, and mark it as being worked on so no one else chooses it.
         TODO: This should make a small 2D array of all eligible Tiles and then randomly select one, so they don't all
         just start from the top right.
         """
         for y in range(MAP_HEIGHT):
             for x in range(MAP_WIDTH):
                 if gamemap_instance.level[x][y].designated and not gamemap_instance.level[x][y].being_worked_on:
+                    gamemap_instance.level[x][y].being_worked_on = True
                     return (x, y)
 
         return (None, None)
@@ -131,14 +132,13 @@ class BasicBuilder(object):
 
         mymap = gamemap_instance.level
 
-        if not self.is_pathmap_created:
-            #Create the path map
-            self.path_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
-            for x in range(1, MAP_WIDTH):
-                for y in range(1, MAP_HEIGHT):
-                    libtcod.map_set_properties(self.path_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
-            print 'Builder created self.path_map'
-            self.is_pathmap_created = True
+        #Create the path map
+        self.path_map = libtcod.map_new(MAP_WIDTH, MAP_HEIGHT)
+        for x in range(1, MAP_WIDTH):
+            for y in range(1, MAP_HEIGHT):
+                libtcod.map_set_properties(self.path_map, x, y, not mymap[x][y].block_sight, not mymap[x][y].blocked)
+        print 'Builder created self.path_map'
+        self.is_pathmap_created = True
 
         # now use the path map to create the path from the explorer's current position to another spot:
         self.path = libtcod.path_new_using_map(self.path_map)
@@ -146,18 +146,20 @@ class BasicBuilder(object):
 
         if destinationx is not None:
             self.work_target = (destinationx, destinationy)
-            mymap[destinationx][destinationy].being_worked_on = True
             print 'Builder chose a work target at ' + str(self.work_target[0]) +', ' + str(self.work_target[1]) + '.'
 
             libtcod.path_compute(self.path, self.owner.x, self.owner.y, destinationx, destinationy)
 
-            originx, originy = libtcod.path_get_origin(self.path)
-            destx, desty = libtcod.path_get_destination(self.path)
+            #originx, originy = libtcod.path_get_origin(self.path)
+            #destx, desty = libtcod.path_get_destination(self.path)
+
+        elif destinationx is None:
+            print 'destinationx is None.'
 
     def take_turn(self, gamemap_instance):
         """
         Current bugs:
-        1) It doesn't turn to gravel- why not?
+        1) The worked-on Tile doesn't turn to gravel- why not?
         2) The loop doesn't really go back around. They don't pick a new target, especially if they
             get stuck while walking. They just give up after the first time they bump into something
             dynamic. 
@@ -189,15 +191,17 @@ class BasicBuilder(object):
 
             # The following logic checks to see if they are standing in any of the 8 squares around
             # the target Tile. I definitely had to draw a diagram for this.
-            if ((my_x+1 == x) and (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) \
-                or ((my_x == x) and (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) \
-                or ((my_x-1 == x) and (my_y+1 == y) or (my_y == y) or (my_y-1 == y)):
+            if ((my_x+1 == x) and ( (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) ) \
+                or ((my_x == x) and ( (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) ) \
+                or ((my_x-1 == x) and ( (my_y+1 == y) or (my_y == y) or (my_y-1 == y)) ):
 
                 # We have arrived at a Tile that needs work done. Now begin work:
                 print 'Builder is standing at (' + str(my_x) +', '+ str(my_y)+') ' \
                     'and is beginning work at (' + str(x) + ', ' + str(y) +').'
 
 
+                # Using a switch statement here because eventually there will be other states like
+                # 'building' or 'installing' something, etc
                 for case in switch(mymap[x][y].designation_type):
                     if case('clearing'): 
                         mymap[x][y].blocked = False
