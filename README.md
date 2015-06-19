@@ -39,5 +39,6 @@ go through the post-mortems and present gameplay statistics.
   reading emails and documents that provide backstory...
 * Adventure mode rather than construction mode - explore a world of randomly generated levels. This will use all
 the single-player utilities that I cut out for the construction mode.
+* Books, manuals, checklists? Randomly generated items to read using madlib method.
 
 This was based off the [libtcod tutorial](http://www.roguebasin.com/index.php?title=Complete_Roguelike_Tutorial,_using_python%2Blibtcod).
